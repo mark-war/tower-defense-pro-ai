@@ -2,6 +2,318 @@ export const GRID_COLS = 30;
 export const GRID_ROWS = 20;
 export const CELL_SIZE = 36;
 
+// ─── TOWER UPGRADE BRANCHES ───────────────────────────────────────────────────
+// Each tower has 2 tiers, each with 2 branching paths (A or B).
+// Player chooses ONE path per tier — cannot take both.
+// XP (earned by damage dealt + kills) unlocks the ability to buy upgrades.
+export const TOWER_UPGRADES = {
+  basic: {
+    xpToTier1: 8,
+    xpToTier2: 20,
+    tier1: {
+      A: {
+        name: "Marksman",
+        desc: "+50% damage, +15% range",
+        icon: "🎯",
+        cost: 60,
+        statDelta: { damage: 0.5, range: 0.15 },
+      },
+      B: {
+        name: "Gatling",
+        desc: "2× fire rate, -10% dmg",
+        icon: "🌀",
+        cost: 60,
+        statDelta: { fireRate: -0.5, damage: -0.1 },
+      },
+    },
+    tier2: {
+      A: {
+        name: "Deadeye",
+        desc: "+100% dmg, armor pierce",
+        icon: "💥",
+        cost: 100,
+        statDelta: { damage: 1.0 },
+        special: "armorPiercing",
+      },
+      B: {
+        name: "Assault",
+        desc: "3× fire rate, splash 30",
+        icon: "⚡",
+        cost: 100,
+        statDelta: { fireRate: -0.66 },
+        special: "splash30",
+      },
+    },
+  },
+  sniper: {
+    xpToTier1: 6,
+    xpToTier2: 16,
+    tier1: {
+      A: {
+        name: "Longshot",
+        desc: "+40% range, +30% dmg",
+        icon: "🔭",
+        cost: 90,
+        statDelta: { range: 0.4, damage: 0.3 },
+      },
+      B: {
+        name: "Piercer",
+        desc: "Armor pierce + 20% dmg",
+        icon: "🗡️",
+        cost: 90,
+        statDelta: { damage: 0.2 },
+        special: "armorPiercing",
+      },
+    },
+    tier2: {
+      A: {
+        name: "Rail Gun",
+        desc: "+150% dmg, passes through",
+        icon: "☄️",
+        cost: 150,
+        statDelta: { damage: 1.5 },
+        special: "pierceThrough",
+      },
+      B: {
+        name: "Quantum",
+        desc: "Ignores stealth + armor",
+        icon: "🌌",
+        cost: 150,
+        statDelta: { damage: 0.5 },
+        special: "fullPierce",
+      },
+    },
+  },
+  cannon: {
+    xpToTier1: 7,
+    xpToTier2: 18,
+    tier1: {
+      A: {
+        name: "Bombard",
+        desc: "+60% splash radius",
+        icon: "💣",
+        cost: 80,
+        statDelta: { splash: 0.6 },
+      },
+      B: {
+        name: "Velocity",
+        desc: "+50% proj speed, -20% cd",
+        icon: "🚀",
+        cost: 80,
+        statDelta: { projectileSpeed: 0.5, fireRate: -0.2 },
+      },
+    },
+    tier2: {
+      A: {
+        name: "Napalm",
+        desc: "Splash + burn 4s on hit",
+        icon: "🔥",
+        cost: 130,
+        statDelta: { splash: 0.3 },
+        special: "burnOnSplash",
+      },
+      B: {
+        name: "Cluster",
+        desc: "Splits into 3 mini-shots",
+        icon: "🌟",
+        cost: 130,
+        statDelta: { damage: 0.5 },
+        special: "clusterShot",
+      },
+    },
+  },
+  laser: {
+    xpToTier1: 10,
+    xpToTier2: 25,
+    tier1: {
+      A: {
+        name: "Overclock",
+        desc: "2× fire rate, +20% dmg",
+        icon: "⚡",
+        cost: 100,
+        statDelta: { fireRate: -0.5, damage: 0.2 },
+      },
+      B: {
+        name: "Lens",
+        desc: "+50% range, +30% dmg",
+        icon: "🔬",
+        cost: 100,
+        statDelta: { range: 0.5, damage: 0.3 },
+      },
+    },
+    tier2: {
+      A: {
+        name: "Death Ray",
+        desc: "Hits ALL enemies in range",
+        icon: "🌈",
+        cost: 180,
+        statDelta: { damage: 0.5 },
+        special: "beamAll",
+      },
+      B: {
+        name: "Disruptor",
+        desc: "Slows + stuns 0.5s on hit",
+        icon: "🌀",
+        cost: 180,
+        statDelta: { damage: 0.3 },
+        special: "stunOnHit",
+      },
+    },
+  },
+  freeze: {
+    xpToTier1: 8,
+    xpToTier2: 18,
+    tier1: {
+      A: {
+        name: "Deep Freeze",
+        desc: "+50% slow duration",
+        icon: "🧊",
+        cost: 70,
+        statDelta: { slowDuration: 0.5 },
+      },
+      B: {
+        name: "Nova",
+        desc: "Area slow on fire",
+        icon: "❄️",
+        cost: 70,
+        statDelta: {},
+        special: "areaFreeze",
+      },
+    },
+    tier2: {
+      A: {
+        name: "Absolute",
+        desc: "Freeze fully stops enemy",
+        icon: "💀",
+        cost: 110,
+        statDelta: { slowDuration: 0.5 },
+        special: "fullFreeze",
+      },
+      B: {
+        name: "Shatter",
+        desc: "Frozen enemies take 2× dmg",
+        icon: "💎",
+        cost: 110,
+        statDelta: {},
+        special: "shatterBuff",
+      },
+    },
+  },
+  tesla: {
+    xpToTier1: 7,
+    xpToTier2: 17,
+    tier1: {
+      A: {
+        name: "Conductor",
+        desc: "+2 chain targets",
+        icon: "🌩️",
+        cost: 110,
+        statDelta: { chainTargets: 2 },
+      },
+      B: {
+        name: "Surge",
+        desc: "+80% damage per chain",
+        icon: "⚡",
+        cost: 110,
+        statDelta: { damage: 0.8 },
+      },
+    },
+    tier2: {
+      A: {
+        name: "Storm",
+        desc: "Chains to 8 targets",
+        icon: "🌪️",
+        cost: 160,
+        statDelta: { chainTargets: 5 },
+      },
+      B: {
+        name: "Overload",
+        desc: "Chain stuns 0.3s each",
+        icon: "💥",
+        cost: 160,
+        statDelta: { damage: 0.5 },
+        special: "chainStun",
+      },
+    },
+  },
+  inferno: {
+    xpToTier1: 9,
+    xpToTier2: 22,
+    tier1: {
+      A: {
+        name: "Wildfire",
+        desc: "+60% burn duration",
+        icon: "🔥",
+        cost: 120,
+        statDelta: { burnDuration: 0.6 },
+      },
+      B: {
+        name: "Floodfire",
+        desc: "+40% range, area ignite",
+        icon: "🌋",
+        cost: 120,
+        statDelta: { range: 0.4 },
+        special: "areaIgnite",
+      },
+    },
+    tier2: {
+      A: {
+        name: "Hellfire",
+        desc: "Burn stacks 3×",
+        icon: "☠️",
+        cost: 180,
+        statDelta: { burnDamage: 2 },
+        special: "burnStack",
+      },
+      B: {
+        name: "Meltdown",
+        desc: "Burning = -40% armor",
+        icon: "⚗️",
+        cost: 180,
+        statDelta: {},
+        special: "armorMelt",
+      },
+    },
+  },
+  vortex: {
+    xpToTier1: 8,
+    xpToTier2: 20,
+    tier1: {
+      A: {
+        name: "Singularity",
+        desc: "+50% pull, +40% splash",
+        icon: "🌀",
+        cost: 130,
+        statDelta: { pullForce: 0.5, splash: 0.4 },
+      },
+      B: {
+        name: "Cyclone",
+        desc: "Continuous spin damage",
+        icon: "🌪️",
+        cost: 130,
+        statDelta: { fireRate: -0.5, damage: 0.6 },
+      },
+    },
+    tier2: {
+      A: {
+        name: "Void Rift",
+        desc: "Teleports enemies back",
+        icon: "🌌",
+        cost: 200,
+        statDelta: {},
+        special: "teleportBack",
+      },
+      B: {
+        name: "Collapse",
+        desc: "Pulls + 3× damage burst",
+        icon: "💥",
+        cost: 200,
+        statDelta: { damage: 2.0 },
+      },
+    },
+  },
+};
+
 // ─── TOWERS ───────────────────────────────────────────────────────────────────
 export const TOWER_TYPES = {
   basic: {
@@ -30,7 +342,7 @@ export const TOWER_TYPES = {
     projectileColor: "#38bdf8",
     projectileSpeed: 14,
     icon: "🎯",
-    desc: "Long range. High single-target.",
+    desc: "Long range, high single-target.",
     category: "attack",
     unlockedAtLevel: 1,
     weakAgainst: ["swarm", "stealth"],
@@ -144,8 +456,9 @@ export const TOWER_TYPES = {
   },
 };
 
-// ─── TOWER CAPS PER CATEGORY ──────────────────────────────────────────────────
-// Each level overrides these via LEVELS[].towerCaps
+// Which towers can reveal/target stealth enemies
+export const STEALTH_COUNTERS = ["laser"];
+
 export const TOWER_CATEGORY_CAPS = {
   attack: { label: "Attack", icon: "⚔️", cap: 8 },
   support: { label: "Support", icon: "🛡️", cap: 4 },
@@ -166,6 +479,7 @@ export const ENEMY_TYPES = {
     icon: "👾",
     desc: "Standard infantry.",
     immunities: [],
+    counterNote: "",
   },
   fast: {
     name: "Raider",
@@ -177,8 +491,9 @@ export const ENEMY_TYPES = {
     armor: 0,
     stealth: false,
     icon: "💨",
-    desc: "Extremely fast.",
+    desc: "Extremely fast. Hard to hit.",
     immunities: [],
+    counterNote: "Use Cryo to slow",
   },
   armored: {
     name: "Tank",
@@ -190,8 +505,9 @@ export const ENEMY_TYPES = {
     armor: 0.45,
     stealth: false,
     icon: "🛡️",
-    desc: "Heavy armor.",
+    desc: "Heavy armor. Resists non-piercing shots.",
     immunities: [],
+    counterNote: "Tesla or Sniper pierces armor",
   },
   swarm: {
     name: "Swarm",
@@ -203,8 +519,9 @@ export const ENEMY_TYPES = {
     armor: 0,
     stealth: false,
     icon: "🐝",
-    desc: "Overwhelming numbers.",
+    desc: "Countless. Overwhelm with numbers.",
     immunities: [],
+    counterNote: "Cannon splash clears groups",
   },
   stealth: {
     name: "Ghost",
@@ -216,8 +533,10 @@ export const ENEMY_TYPES = {
     armor: 0,
     stealth: true,
     icon: "👻",
-    desc: "Invisible. Only Laser targets it.",
+    desc: "INVISIBLE — most towers cannot target it.",
     immunities: [],
+    counterNote: "⚠ Laser ONLY can target stealth",
+    requiresCounter: "laser",
   },
   spread: {
     name: "Brood",
@@ -229,12 +548,13 @@ export const ENEMY_TYPES = {
     armor: 0.2,
     stealth: false,
     icon: "🌸",
-    desc: "Splits into swarms on death.",
+    desc: "Splits into 4 swarms on death.",
     immunities: [],
+    counterNote: "Kill fast before it reaches end",
     spawnsOnDeath: "swarm",
     spawnCount: 4,
   },
-  // ── BOSSES ────────────────────────────────────────────────────────────────
+  // ── Bosses ─────────────────────────────────────────────────────────────────
   boss_colossus: {
     name: "Colossus",
     hp: 1400,
@@ -242,17 +562,23 @@ export const ENEMY_TYPES = {
     reward: 120,
     color: "#dc2626",
     size: 22,
-    armor: 0.55,
+    armor: 0.35,
     stealth: false,
     icon: "💀",
-    desc: "Armored walker. Cryo-immune.",
     isBoss: true,
+    desc: "Armored walker. Cryo is USELESS against it.",
     immunities: ["freeze"],
+    counterNote: "⚠ Cryo cannot slow it. Use Tesla (armor-pierce chains).",
     weakness: "tesla",
-    weaknessHint: "Cryo bounces off. Tesla armor-piercing chains work.",
+    weaknessHint: "Tesla chains pierce its armor and ignore Cryo-immunity.",
     phaseAt: 0.5,
-    phaseBoost: { speed: 1.6, armorDelta: 0.3 },
+    phaseBoost: { speed: 1.4, armorDelta: 0.15 },
     bossAbility: "enrage",
+    lootDrop: {
+      type: "speed_boost",
+      duration: 600,
+      label: "⚡ Speed Frenzy 10s",
+    },
   },
   boss_phantom: {
     name: "Phantom Lord",
@@ -264,14 +590,21 @@ export const ENEMY_TYPES = {
     armor: 0.1,
     stealth: true,
     icon: "🌑",
-    desc: "Stealth wraith. Splash misses it.",
     isBoss: true,
+    desc: "Stealth wraith. Splash and bullets pass THROUGH it.",
     immunities: ["cannon", "basic"],
+    counterNote: "⚠ Cannon & Gunner miss entirely. Only Laser locks on.",
     weakness: "laser",
-    weaknessHint: "Splash and bullets pass through it. Lock on with Laser.",
+    weaknessHint:
+      "Laser auto-targets through stealth — the only tower that can hit it.",
     phaseAt: 0.4,
     phaseBoost: { speed: 0.5 },
     bossAbility: "phase",
+    lootDrop: {
+      type: "damage_boost",
+      duration: 480,
+      label: "💥 Damage Surge 8s",
+    },
   },
   boss_titan: {
     name: "Titan Hive",
@@ -280,18 +613,20 @@ export const ENEMY_TYPES = {
     reward: 200,
     color: "#b45309",
     size: 26,
-    armor: 0.6,
+    armor: 0.4,
     stealth: false,
     icon: "🦂",
-    desc: "Hive mind. Tech-immune.",
     isBoss: true,
+    desc: "Hive-mind colossus. Tech weapons fail against its shell.",
     immunities: ["sniper", "laser"],
+    counterNote: "⚠ Sniper & Laser bounce off. Use Cannon heavy splash.",
     weakness: "cannon",
-    weaknessHint: "Precision fire fails. Blast it with heavy splash.",
+    weaknessHint: "Cannon splash bypasses its tech-immunity — blast it.",
     spawnsOnDamage: { type: "swarm", every: 350, count: 3 },
     phaseAt: 0.6,
     phaseBoost: { speed: 0.2 },
     bossAbility: "spawn",
+    lootDrop: { type: "gold_shower", amount: 150, label: "💰 +150g Drop" },
   },
   boss_voidreaper: {
     name: "Void Reaper",
@@ -300,18 +635,21 @@ export const ENEMY_TYPES = {
     reward: 180,
     color: "#312e81",
     size: 24,
-    armor: 0.3,
+    armor: 0.25,
     stealth: false,
     icon: "☠️",
-    desc: "Voidborn. Resists most damage.",
     isBoss: true,
+    desc: "Voidborn destroyer. Physical/cold damage is ABSORBED.",
     immunities: ["basic", "freeze", "cannon"],
+    counterNote:
+      "⚠ Gunner/Cryo/Cannon all absorbed. Inferno burns through void shields.",
     weakness: "inferno",
     weaknessHint:
-      "Void shields block physical/cold. Burn through with Inferno.",
+      "Void energy is flammable — Inferno burn ignores its shields.",
     phaseAt: 0.45,
-    phaseBoost: { speed: 0.4, armorDelta: -0.3 },
+    phaseBoost: { speed: 0.4, armorDelta: -0.25 },
     bossAbility: "drain",
+    lootDrop: { type: "lives_restore", amount: 3, label: "❤️ +3 Lives" },
   },
 };
 
@@ -342,7 +680,7 @@ export const MAPS = {
   },
   spiral: {
     name: "Vortex Spiral",
-    description: "Long spiral. More placement, more enemies.",
+    description: "Long spiral. More placement opportunities.",
     unlockedAtLevel: 2,
     theme: {
       path: "#1c1917",
@@ -417,7 +755,7 @@ export const LEVELS = [
     unlockedTowers: ["basic", "sniper", "cannon"],
     towerCaps: { attack: 8, support: 3, tech: 3 },
     bossWaves: { 7: "boss_colossus" },
-    description: "Learn the ropes. The AI is watching your every move.",
+    description: "Learn the ropes. The AI is watching.",
   },
   {
     id: 2,
@@ -441,7 +779,7 @@ export const LEVELS = [
     unlockedTowers: ["basic", "sniper", "cannon", "laser", "freeze", "tesla"],
     towerCaps: { attack: 6, support: 4, tech: 5 },
     bossWaves: { 5: "boss_colossus", 9: "boss_phantom", 12: "boss_titan" },
-    description: "Three boss encounters. The AI escalates hard.",
+    description: "Three bosses. Every cap slot matters.",
   },
   {
     id: 4,
@@ -466,8 +804,7 @@ export const LEVELS = [
       11: "boss_voidreaper",
       14: "boss_colossus",
     },
-    description:
-      "Tight caps, brutal bosses. Every tower placement is critical.",
+    description: "Tight caps, brutal bosses. Every decision is critical.",
   },
   {
     id: 5,
@@ -494,9 +831,107 @@ export const LEVELS = [
       14: "boss_voidreaper",
       16: "boss_titan",
     },
-    description: "Full arsenal. Max AI aggression. Can you outsmart it?",
+    description: "Full arsenal. Max AI aggression. Survive if you can.",
   },
 ];
+
+// ─── ENDLESS MODE ─────────────────────────────────────────────────────────────
+// Uses all maps rotating, all towers, scaling difficulty every 10 waves.
+export const ENDLESS_CONFIG = {
+  id: 99,
+  name: "Endless Siege",
+  isEndless: true,
+  startGold: 350,
+  startLives: 25,
+  unlockedTowers: Object.keys({
+    basic: 1,
+    sniper: 1,
+    cannon: 1,
+    laser: 1,
+    freeze: 1,
+    tesla: 1,
+    inferno: 1,
+    vortex: 1,
+  }),
+  towerCaps: { attack: 10, support: 6, tech: 7 },
+  waves: Infinity,
+  bossWaves: {},
+  // Milestone mechanics that unlock every 10 waves
+  mechanics: {
+    10: { label: "Elite Units", desc: "Enemies gain 20% armor permanently" },
+    20: { label: "Speed Surge", desc: "All enemies permanently +15% faster" },
+    30: { label: "Boss Escort", desc: "Bosses now arrive with armored guard" },
+    40: { label: "Void Rifts", desc: "Stealth enemies appear in all waves" },
+    50: { label: "Titan Protocol", desc: "Boss HP x2, double boss waves" },
+  },
+  // Boss rotation every 5 waves from wave 10 — used by WaveAI._endlessBossForWave
+  bossSchedule: [
+    "boss_colossus",
+    "boss_phantom",
+    "boss_titan",
+    "boss_voidreaper",
+  ],
+};
+
+// ─── ABILITIES ────────────────────────────────────────────────────────────────
+export const ABILITIES = {
+  airstrike: {
+    name: "Airstrike",
+    icon: "✈️",
+    desc: "Deals 500 damage to all enemies on screen",
+    cooldown: 900,
+    cost: 0,
+    color: "#ef4444",
+  },
+  emp: {
+    name: "EMP Blast",
+    icon: "🌐",
+    desc: "Stuns all enemies for 3 seconds",
+    cooldown: 720,
+    cost: 0,
+    color: "#fbbf24",
+  },
+  reinforce: {
+    name: "Reinforce",
+    icon: "🏰",
+    desc: "All towers fire 2× faster for 8 seconds",
+    cooldown: 1200,
+    cost: 0,
+    color: "#4ade80",
+  },
+};
+
+// ─── SYNERGY BONUSES ──────────────────────────────────────────────────────────
+export const SYNERGIES = {
+  freeze_cannon: {
+    towers: ["freeze", "cannon"],
+    name: "Shatter",
+    desc: "Slowed enemies take +50% splash damage",
+    color: "#a5f3fc",
+    bonus: { splashDamageVsSlowed: 0.5 },
+  },
+  laser_tesla: {
+    towers: ["laser", "tesla"],
+    name: "Overcharge",
+    desc: "Tesla chains to laser-revealed stealth targets",
+    color: "#fbbf24",
+    bonus: { teslaRevealStealth: true },
+  },
+  inferno_cannon: {
+    towers: ["inferno", "cannon"],
+    name: "Napalm Zone",
+    desc: "Cannon splash leaves burning ground for 3s",
+    color: "#ef4444",
+    bonus: { burnGround: true },
+  },
+  sniper_freeze: {
+    towers: ["sniper", "freeze"],
+    name: "Frozen Target",
+    desc: "Sniper crits on slowed enemies (+80% dmg)",
+    color: "#38bdf8",
+    bonus: { sniperCritOnSlowed: 0.8 },
+  },
+};
 
 // ─── ADMIN CONFIG ─────────────────────────────────────────────────────────────
 export const ADMIN_CONFIG = {
@@ -505,9 +940,11 @@ export const ADMIN_CONFIG = {
     minWavesBeforeAdapt: 2,
     crossGameMemoryDecay: 0.82,
     maxExploitAttempts: 4,
-    bossHpScaling: 1.0,
-    enemyHpPerWave: 0.14,
-    enemySpeedPerWave: 0.022,
+    bossHpScaling: 2.0,
+    enemyHpPerWave: 0.13,
+    enemySpeedPerWave: 0.02,
+    endlessHpPerWave: 0.1,
+    endlessSpeedPerWave: 0.015,
   },
   economy: {
     waveClearBonus: 20,
@@ -516,7 +953,6 @@ export const ADMIN_CONFIG = {
   },
   visual: {
     showBossImmunityHints: true,
-    enemyIconSize: 0.62,
     bossWarningFrames: 200,
   },
 };

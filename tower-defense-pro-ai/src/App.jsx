@@ -12,16 +12,23 @@ export default function App() {
   const [sellMode, setSellMode] = useState(false);
   const [currentLevel, setCurrentLevel] = useState(1);
 
-  // ── Boot engine ─────────────────────────────────────────────────────────────
+  // ── Boot ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!canvasRef.current) return;
-    const engine = new GameEngine(canvasRef.current, setGameState, 1);
+    const engine = new GameEngine(
+      canvasRef.current,
+      (s) => {
+        // Expose selectedTowerCell on state for HUD
+        setGameState({ ...s, selectedTowerCell: engine.selectedTowerCell });
+      },
+      1,
+    );
     engineRef.current = engine;
     return () => engine.destroy();
   }, []);
 
-  // ── Canvas interactions ──────────────────────────────────────────────────────
-  const getCell = (e) => {
+  // ── Cell coordinate helper ────────────────────────────────────────────────────
+  const getCell = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     const scaleX = canvasRef.current.width / rect.width;
     const scaleY = canvasRef.current.height / rect.height;
@@ -29,37 +36,57 @@ export default function App() {
       col: Math.floor(((e.clientX - rect.left) * scaleX) / CELL_SIZE),
       row: Math.floor(((e.clientY - rect.top) * scaleY) / CELL_SIZE),
     };
-  };
+  }, []);
 
+  // ── Canvas click ──────────────────────────────────────────────────────────────
   const handleClick = useCallback(
     (e) => {
       if (!engineRef.current) return;
       const { col, row } = getCell(e);
       if (sellMode) {
         engineRef.current.sellTower(col, row);
+      } else if (activeTab === "upgrade") {
+        // Click in upgrade mode: select tower for panel
+        engineRef.current.selectTowerCell(col, row);
+        setGameState((s) => ({
+          ...s,
+          selectedTowerCell: engineRef.current.selectedTowerCell,
+        }));
       } else {
-        engineRef.current.placeTower(col, row);
+        const placed = engineRef.current.placeTower(col, row);
+        if (!placed && engineRef.current.grid[row]?.[col]) {
+          // Clicked an existing tower while in build mode → switch to upgrade tab and select it
+          engineRef.current.selectTowerCell(col, row);
+          setActiveTab("upgrade");
+          setGameState((s) => ({
+            ...s,
+            selectedTowerCell: engineRef.current.selectedTowerCell,
+          }));
+        }
       }
     },
-    [sellMode],
+    [sellMode, activeTab, getCell],
   );
 
-  const handleMouseMove = useCallback((e) => {
-    if (!engineRef.current) return;
-    const { col, row } = getCell(e);
-    engineRef.current.setHoveredCell(col, row);
-  }, []);
+  const handleMouseMove = useCallback(
+    (e) => {
+      if (!engineRef.current) return;
+      const { col, row } = getCell(e);
+      engineRef.current.setHoveredCell(col, row);
+    },
+    [getCell],
+  );
 
   const handleMouseLeave = useCallback(() => {
-    if (!engineRef.current) return;
-    engineRef.current.setHoveredCell(-1, -1);
+    engineRef.current?.setHoveredCell(-1, -1);
   }, []);
 
-  // ── HUD callbacks ─────────────────────────────────────────────────────────
+  // ── HUD handlers ─────────────────────────────────────────────────────────────
   const handleSelectTower = useCallback((type) => {
     setSelected(type);
     setSellMode(false);
-    if (engineRef.current) engineRef.current.setSelectedTowerType(type);
+    engineRef.current?.setSelectedTowerType(type);
+    engineRef.current?.selectTowerCell(-1, -1); // deselect
   }, []);
 
   const handleSellMode = useCallback(() => {
@@ -67,22 +94,22 @@ export default function App() {
   }, []);
 
   const handleStartWave = useCallback(() => {
-    if (engineRef.current) engineRef.current.startWave();
+    engineRef.current?.startWave();
   }, []);
 
   const handleReset = useCallback(
     (levelId) => {
       if (!engineRef.current) return;
-      const lvlId = levelId || currentLevel;
-      setCurrentLevel(lvlId);
+      const id = levelId || currentLevel;
+      setCurrentLevel(id);
       setSellMode(false);
-      engineRef.current.reset(lvlId);
-      // Select first unlocked tower
-      const eng = engineRef.current;
-      if (eng.levelConfig?.unlockedTowers?.[0]) {
-        setSelected(eng.levelConfig.unlockedTowers[0]);
-        eng.setSelectedTowerType(eng.levelConfig.unlockedTowers[0]);
+      engineRef.current.reset(id);
+      const firstTower = engineRef.current.levelConfig?.unlockedTowers?.[0];
+      if (firstTower) {
+        setSelected(firstTower);
+        engineRef.current.setSelectedTowerType(firstTower);
       }
+      setGameState((s) => ({ ...s, selectedTowerCell: null }));
     },
     [currentLevel],
   );
@@ -91,17 +118,41 @@ export default function App() {
     setCurrentLevel(levelId);
     setSellMode(false);
     setActiveTab("build");
-    if (engineRef.current) {
-      engineRef.current.reset(levelId);
-      const eng = engineRef.current;
-      if (eng.levelConfig?.unlockedTowers?.[0]) {
-        setSelected(eng.levelConfig.unlockedTowers[0]);
-        eng.setSelectedTowerType(eng.levelConfig.unlockedTowers[0]);
-      }
+    engineRef.current?.reset(levelId);
+    const firstTower = engineRef.current?.levelConfig?.unlockedTowers?.[0];
+    if (firstTower) {
+      setSelected(firstTower);
+      engineRef.current?.setSelectedTowerType(firstTower);
     }
+    setGameState((s) => ({ ...s, selectedTowerCell: null }));
   }, []);
 
   const handleSetTab = useCallback((tab) => setActiveTab(tab), []);
+
+  const handleUpgrade = useCallback((col, row, tier, path) => {
+    if (!engineRef.current) return;
+    engineRef.current.upgradeTower(col, row, tier, path);
+  }, []);
+
+  const handleTriggerAbility = useCallback((key) => {
+    engineRef.current?.triggerAbility(key);
+  }, []);
+
+  const handleTowerCellClick = useCallback((col, row) => {
+    if (!engineRef.current) return;
+    engineRef.current.selectTowerCell(col, row);
+    setGameState((s) => ({
+      ...s,
+      selectedTowerCell: engineRef.current.selectedTowerCell,
+    }));
+    setActiveTab("upgrade");
+  }, []);
+
+  const getCursor = () => {
+    if (sellMode) return "cell";
+    if (activeTab === "upgrade") return "pointer";
+    return "crosshair";
+  };
 
   return (
     <div
@@ -113,7 +164,7 @@ export default function App() {
         background: "#0a0a0f",
       }}
     >
-      {/* ── Canvas area ───────────────────────────────────────────────────── */}
+      {/* Canvas */}
       <div
         style={{
           flex: 1,
@@ -122,7 +173,7 @@ export default function App() {
           justifyContent: "center",
           overflow: "hidden",
           background: "#060610",
-          cursor: sellMode ? "cell" : "crosshair",
+          cursor: getCursor(),
         }}
       >
         <canvas
@@ -138,7 +189,7 @@ export default function App() {
         />
       </div>
 
-      {/* ── HUD ──────────────────────────────────────────────────────────── */}
+      {/* HUD */}
       <HUD
         gameState={gameState}
         selectedTower={selectedTower}
@@ -150,6 +201,9 @@ export default function App() {
         onReset={handleReset}
         onLevelSelect={handleLevelSelect}
         onSetTab={handleSetTab}
+        onUpgrade={handleUpgrade}
+        onTriggerAbility={handleTriggerAbility}
+        onTowerCellClick={handleTowerCellClick}
       />
     </div>
   );

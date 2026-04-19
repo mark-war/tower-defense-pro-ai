@@ -843,6 +843,7 @@ export function HUD({
               tower={selectedTowerObj}
               onUpgrade={onUpgrade}
               gold={gold}
+              currentWave={wave}
             />
           ) : (
             <div
@@ -1445,89 +1446,88 @@ export function HUD({
 }
 
 // ─── Upgrade Panel ────────────────────────────────────────────────────────────
-function UpgradePanel({ tower, onUpgrade, gold }) {
+function SkillBtn({
+  skillType,
+  path,
+  skillDef,
+  locked,
+  taken,
+  gold,
+  onUpgrade,
+  tower,
+}) {
+  if (!skillDef) return null;
+  const canBuy = !locked && !taken && gold >= skillDef.cost;
+  return (
+    <button
+      onClick={() => canBuy && onUpgrade(tower.col, tower.row, skillType, path)}
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 7,
+        padding: "7px 9px",
+        width: "100%",
+        textAlign: "left",
+        marginBottom: 4,
+        background: taken ? "#0f2a0f" : locked ? "#1a0a0a" : "#0d1117",
+        border: `1px solid ${taken ? "#4ade80" : locked ? "#3a1a1a" : canBuy ? "#fbbf24" : "#1e293b"}`,
+        borderRadius: 5,
+        color: locked && !taken ? "#374151" : "#e2e8f0",
+        cursor: canBuy ? "pointer" : "default",
+        fontFamily: "monospace",
+        opacity: locked && !taken ? 0.45 : 1,
+      }}
+    >
+      <span style={{ fontSize: 16 }}>{skillDef.icon}</span>
+      <div style={{ flex: 1 }}>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: "bold",
+            color: taken ? "#4ade80" : "#e2e8f0",
+          }}
+        >
+          {skillDef.name}
+          {taken ? " ✓" : ""}
+        </div>
+        <div style={{ fontSize: 9, color: "#6b7280", lineHeight: 1.4 }}>
+          {skillDef.desc}
+        </div>
+        {skillDef.special && (
+          <div style={{ fontSize: 8, color: "#818cf8", marginTop: 1 }}>
+            ✦ {skillDef.special}
+          </div>
+        )}
+      </div>
+      {!taken && !locked && (
+        <div
+          style={{
+            fontSize: 10,
+            color: gold >= skillDef.cost ? "#facc15" : "#374151",
+            fontWeight: "bold",
+            minWidth: 36,
+            textAlign: "right",
+          }}
+        >
+          {skillDef.cost}g
+        </div>
+      )}
+    </button>
+  );
+}
+
+function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
   const def = TOWER_TYPES[tower.type];
   const upgDef = TOWER_UPGRADES[tower.type];
   if (!def || !upgDef)
-    return (
-      <div style={{ fontSize: 10, color: "#374151" }}>
-        No upgrades available.
-      </div>
-    );
+    return <div style={{ fontSize: 10, color: "#374151" }}>No upgrades.</div>;
 
-  const xpT1 = tower.xp >= tower.xpToTier1;
-  const xpT2 = tower.xp >= tower.xpToTier2 && tower.tier >= 1;
-
-  const renderChoice = (tier, path, chosen, xpUnlocked) => {
-    const td = tier === 1 ? upgDef.tier1[path] : upgDef.tier2[path];
-    if (!td) return null;
-    const isTaken =
-      (tier === 1 && tower.chosenPath === path) ||
-      (tier === 2 && tower.tier2Path === path);
-    const isBlocked =
-      (tier === 1 && tower.tier >= 1 && !isTaken) ||
-      (tier === 2 && tower.tier >= 2 && !isTaken);
-    const canBuy =
-      xpUnlocked &&
-      !tower[tier === 1 ? "chosenPath" : "tier2Path"] &&
-      gold >= td.cost;
-    return (
-      <button
-        onClick={() => canBuy && onUpgrade(tower.col, tower.row, tier, path)}
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 7,
-          padding: "7px 9px",
-          width: "100%",
-          textAlign: "left",
-          background: isTaken ? "#0f2a0f" : isBlocked ? "#1a0a0a" : "#0d1117",
-          border: `1px solid ${isTaken ? "#4ade80" : isBlocked ? "#3a1a1a" : canBuy ? "#fbbf24" : "#1e293b"}`,
-          borderRadius: 5,
-          color: isBlocked ? "#374151" : "#e2e8f0",
-          cursor: canBuy ? "pointer" : isBlocked ? "not-allowed" : "default",
-          fontFamily: "'Courier New',monospace",
-          marginBottom: 4,
-          opacity: !xpUnlocked && !isTaken ? 0.4 : 1,
-        }}
-      >
-        <span style={{ fontSize: 18, lineHeight: 1 }}>{td.icon}</span>
-        <div style={{ flex: 1 }}>
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: "bold",
-              color: isTaken ? "#4ade80" : isBlocked ? "#374151" : "#e2e8f0",
-            }}
-          >
-            {td.name}
-            {isTaken ? " ✓" : ""}
-          </div>
-          <div style={{ fontSize: 9, color: "#6b7280", lineHeight: 1.4 }}>
-            {td.desc}
-          </div>
-          {td.special && (
-            <div style={{ fontSize: 8, color: "#818cf8", marginTop: 1 }}>
-              ✦ {td.special}
-            </div>
-          )}
-        </div>
-        {!isTaken && !isBlocked && (
-          <div
-            style={{
-              fontSize: 10,
-              color: gold >= td.cost ? "#facc15" : "#374151",
-              fontWeight: "bold",
-              minWidth: 36,
-              textAlign: "right",
-            }}
-          >
-            {td.cost}g
-          </div>
-        )}
-      </button>
-    );
-  };
+  const passiveTier = tower.passiveTier || 0;
+  const nextPassive = upgDef.passives.find((p) => p.tier > passiveTier);
+  const s5 = upgDef.skill5,
+    s10 = upgDef.skill10;
+  const l50 = upgDef.legendary50,
+    l100 = upgDef.legendary100;
 
   return (
     <div>
@@ -1542,10 +1542,9 @@ function UpgradePanel({ tower, onUpgrade, gold }) {
           borderRadius: 5,
         }}
       >
-        <span style={{ fontSize: 22 }}>{def.icon}</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12, fontWeight: "bold", color: def.color }}>
-            {def.name} <span style={{ color: "#475569" }}>T{tower.tier}</span>
+            {def.name} <span style={{ color: "#475569" }}>P{passiveTier}</span>
           </div>
           <div style={{ fontSize: 9, color: "#6b7280" }}>
             {tower.kills} kills · {Math.floor(tower.xp)} xp
@@ -1553,41 +1552,70 @@ function UpgradePanel({ tower, onUpgrade, gold }) {
         </div>
       </div>
 
-      {/* XP progress */}
       <div style={{ marginBottom: 10 }}>
         <div
           style={{
-            display: "flex",
-            justifyContent: "space-between",
             fontSize: 9,
-            color: "#6b7280",
-            marginBottom: 2,
+            color: "#38bdf8",
+            letterSpacing: "0.08em",
+            marginBottom: 4,
           }}
         >
-          <span>XP Progress</span>
-          <span>
-            {Math.floor(tower.xp)} /{" "}
-            {tower.tier < 1 ? tower.xpToTier1 : tower.xpToTier2} xp
-          </span>
+          PASSIVE UPGRADES (auto)
         </div>
+        <div style={{ display: "flex", gap: 3, marginBottom: 4 }}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => {
+            const isSkill = n === 5 || n === 10;
+            const done =
+              n <= passiveTier ||
+              (n === 5 && tower.skill5chosen) ||
+              (n === 10 && tower.skill10chosen);
+            return (
+              <div
+                key={n}
+                style={{
+                  flex: 1,
+                  height: 18,
+                  borderRadius: 3,
+                  fontSize: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: "bold",
+                  background: done
+                    ? isSkill
+                      ? "#fbbf24"
+                      : "#1d4ed8"
+                    : "#1e293b",
+                  color: done ? "#000" : "#374151",
+                  border: isSkill ? "1px solid #fbbf24" : "none",
+                }}
+              >
+                {isSkill ? "S" : n}
+              </div>
+            );
+          })}
+        </div>
+        {nextPassive && (
+          <div style={{ fontSize: 9, color: "#4b5563" }}>
+            Next passive at {nextPassive.xp} xp: {nextPassive.label}
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
         <div style={{ height: 5, background: "#1e293b", borderRadius: 3 }}>
           <div
             style={{
               height: "100%",
-              width: `${Math.min(100, (tower.xp / (tower.tier < 1 ? tower.xpToTier1 : tower.xpToTier2)) * 100)}%`,
+              width: `${Math.min(100, (tower.xp / (nextPassive?.xp || s5?.xp || 999)) * 100)}%`,
               background: tower.upgradeReady ? "#fbbf24" : "#38bdf8",
               borderRadius: 3,
             }}
           />
         </div>
-        {!tower.upgradeReady && (
-          <div style={{ fontSize: 8, color: "#374151", marginTop: 2 }}>
-            Earn more kills to unlock upgrade tier
-          </div>
-        )}
       </div>
 
-      {/* Tier 1 */}
       <div
         style={{
           fontSize: 9,
@@ -1596,35 +1624,137 @@ function UpgradePanel({ tower, onUpgrade, gold }) {
           marginBottom: 5,
         }}
       >
-        TIER 1 UPGRADE{" "}
-        {!xpT1 && `(${tower.xpToTier1 - Math.floor(tower.xp)} xp needed)`}
+        SKILL — TIER 5{" "}
+        {!tower.skill5chosen && tower.passiveTier < 4
+          ? "(reach passive 4 first)"
+          : tower.xp < s5?.xp
+            ? `(${s5.xp - Math.floor(tower.xp)} xp needed)`
+            : ""}
       </div>
-      {renderChoice(1, "A", tower.chosenPath, xpT1)}
-      {renderChoice(1, "B", tower.chosenPath, xpT1)}
+      <SkillBtn
+        skillType="skill5"
+        path="A"
+        skillDef={s5?.A}
+        locked={tower.passiveTier < 4 || tower.xp < s5?.xp}
+        taken={tower.skill5chosen === "A"}
+        gold={gold}
+        onUpgrade={onUpgrade}
+        tower={tower}
+      />
+      <SkillBtn
+        skillType="skill5"
+        path="B"
+        skillDef={s5?.B}
+        locked={tower.passiveTier < 4 || tower.xp < s5?.xp}
+        taken={tower.skill5chosen === "B"}
+        gold={gold}
+        onUpgrade={onUpgrade}
+        tower={tower}
+      />
 
-      {/* Tier 2 */}
       <div
         style={{
           fontSize: 9,
           color: "#818cf8",
           letterSpacing: "0.08em",
           marginBottom: 5,
-          marginTop: 8,
+          marginTop: 10,
         }}
       >
-        TIER 2 UPGRADE{" "}
-        {!xpT2 && tower.tier < 1
-          ? "(complete tier 1 first)"
-          : !xpT2
-            ? `(${tower.xpToTier2 - Math.floor(tower.xp)} xp needed)`
-            : ""}
+        SKILL — TIER 10{" "}
+        {!tower.skill5chosen
+          ? "(complete skill 5 first)"
+          : tower.passiveTier < 9
+            ? "(reach passive 9 first)"
+            : tower.xp < s10?.xp
+              ? `(${s10.xp - Math.floor(tower.xp)} xp needed)`
+              : ""}
       </div>
-      {renderChoice(2, "A", tower.tier2Path, xpT2)}
-      {renderChoice(2, "B", tower.tier2Path, xpT2)}
+      <SkillBtn
+        skillType="skill10"
+        path="A"
+        skillDef={s10?.A}
+        locked={
+          !tower.skill5chosen || tower.passiveTier < 9 || tower.xp < s10?.xp
+        }
+        taken={tower.skill10chosen === "A"}
+        gold={gold}
+        onUpgrade={onUpgrade}
+        tower={tower}
+      />
+      <SkillBtn
+        skillType="skill10"
+        path="B"
+        skillDef={s10?.B}
+        locked={
+          !tower.skill5chosen || tower.passiveTier < 9 || tower.xp < s10?.xp
+        }
+        taken={tower.skill10chosen === "B"}
+        gold={gold}
+        onUpgrade={onUpgrade}
+        tower={tower}
+      />
+
+      {l50 && (
+        <>
+          <div
+            style={{
+              fontSize: 9,
+              color: "#f59e0b",
+              letterSpacing: "0.08em",
+              marginBottom: 5,
+              marginTop: 10,
+            }}
+          >
+            ✦ LEGENDARY (wave {l50.unlocksAtWave}+){" "}
+            {!tower.skill10chosen
+              ? "(complete skill 10 first)"
+              : currentWave < l50.unlocksAtWave
+                ? `(reach wave ${l50.unlocksAtWave})`
+                : ""}
+          </div>
+          <SkillBtn
+            skillType="legendary50"
+            path="A"
+            skillDef={l50}
+            locked={!tower.skill10chosen || currentWave < l50.unlocksAtWave}
+            taken={tower.legendaryUnlocked}
+            gold={gold}
+            onUpgrade={onUpgrade}
+            tower={tower}
+          />
+        </>
+      )}
+
+      {l100 && tower.legendaryUnlocked && (
+        <>
+          <div
+            style={{
+              fontSize: 9,
+              color: "#ef4444",
+              letterSpacing: "0.08em",
+              marginBottom: 5,
+              marginTop: 10,
+            }}
+          >
+            ✦✦ LEGENDARY (wave {l100.unlocksAtWave}+)
+          </div>
+          <SkillBtn
+            skillType="legendary100"
+            path="A"
+            skillDef={l100}
+            locked={currentWave < l100.unlocksAtWave}
+            taken={tower.legendary100Unlocked}
+            gold={gold}
+            onUpgrade={onUpgrade}
+            tower={tower}
+          />
+        </>
+      )}
 
       {tower.specials?.length > 0 && (
         <div style={{ marginTop: 8, fontSize: 9, color: "#6b7280" }}>
-          Active specials:{" "}
+          Active:{" "}
           <span style={{ color: "#818cf8" }}>{tower.specials.join(", ")}</span>
         </div>
       )}

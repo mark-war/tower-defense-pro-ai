@@ -8,25 +8,41 @@ export const CELL_SIZE = 36;
 // XP (earned by damage dealt + kills) unlocks the ability to buy upgrades.
 export const TOWER_UPGRADES = {
   basic: {
-    xpToTier1: 8,
-    xpToTier2: 20,
-    tier1: {
+    passives: [
+      { tier: 1, xp: 6, stat: "damage", mult: 0.12, label: "+12% dmg" },
+      { tier: 2, xp: 14, stat: "range", mult: 0.08, label: "+8% range" },
+      { tier: 3, xp: 25, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 4, xp: 40, stat: "fireRate", mult: -0.1, label: "−10% cooldown" },
+      { tier: 6, xp: 70, stat: "damage", mult: 0.22, label: "+22% dmg" },
+      { tier: 7, xp: 95, stat: "range", mult: 0.12, label: "+12% range" },
+      { tier: 8, xp: 130, stat: "damage", mult: 0.28, label: "+28% dmg" },
+      {
+        tier: 9,
+        xp: 170,
+        stat: "fireRate",
+        mult: -0.15,
+        label: "−15% cooldown",
+      },
+    ],
+    skill5: {
+      xp: 52,
       A: {
         name: "Marksman",
-        desc: "+50% damage, +15% range",
+        desc: "+50% dmg, +15% range",
         icon: "🎯",
         cost: 60,
         statDelta: { damage: 0.5, range: 0.15 },
       },
       B: {
         name: "Gatling",
-        desc: "2× fire rate, -10% dmg",
+        desc: "2× fire rate",
         icon: "🌀",
         cost: 60,
-        statDelta: { fireRate: -0.5, damage: -0.1 },
+        statDelta: { fireRate: -0.5 },
       },
     },
-    tier2: {
+    skill10: {
+      xp: 220,
       A: {
         name: "Deadeye",
         desc: "+100% dmg, armor pierce",
@@ -37,18 +53,49 @@ export const TOWER_UPGRADES = {
       },
       B: {
         name: "Assault",
-        desc: "3× fire rate, splash 30",
+        desc: "3× fire rate + splash 30",
         icon: "⚡",
         cost: 100,
         statDelta: { fireRate: -0.66 },
         special: "splash30",
       },
     },
+    legendary50: {
+      name: "Overwatch",
+      desc: "Bullets chain to nearest enemy on hit.",
+      icon: "🔱",
+      cost: 400,
+      special: "bulletChain",
+      unlocksAtWave: 50,
+    },
+    legendary100: {
+      name: "Singularity",
+      desc: "Every 10th bullet creates a black hole.",
+      icon: "🌌",
+      cost: 800,
+      special: "blackHole",
+      unlocksAtWave: 100,
+    },
   },
   sniper: {
-    xpToTier1: 6,
-    xpToTier2: 16,
-    tier1: {
+    passives: [
+      { tier: 1, xp: 5, stat: "damage", mult: 0.15, label: "+15% dmg" },
+      { tier: 2, xp: 12, stat: "range", mult: 0.12, label: "+12% range" },
+      { tier: 3, xp: 22, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      { tier: 4, xp: 36, stat: "fireRate", mult: -0.1, label: "−10% cooldown" },
+      { tier: 6, xp: 75, stat: "damage", mult: 0.28, label: "+28% dmg" },
+      { tier: 7, xp: 105, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 8, xp: 140, stat: "damage", mult: 0.35, label: "+35% dmg" },
+      {
+        tier: 9,
+        xp: 190,
+        stat: "fireRate",
+        mult: -0.12,
+        label: "−12% cooldown",
+      },
+    ],
+    skill5: {
+      xp: 48,
       A: {
         name: "Longshot",
         desc: "+40% range, +30% dmg",
@@ -65,10 +112,11 @@ export const TOWER_UPGRADES = {
         special: "armorPiercing",
       },
     },
-    tier2: {
+    skill10: {
+      xp: 240,
       A: {
         name: "Rail Gun",
-        desc: "+150% dmg, passes through",
+        desc: "+150% dmg, pass-through",
         icon: "☄️",
         cost: 150,
         statDelta: { damage: 1.5 },
@@ -83,11 +131,42 @@ export const TOWER_UPGRADES = {
         special: "fullPierce",
       },
     },
+    legendary50: {
+      name: "God's Eye",
+      desc: "Reveals all stealth. Crits ignore armor.",
+      icon: "👁️",
+      cost: 400,
+      special: "allReveal",
+      unlocksAtWave: 50,
+    },
+    legendary100: {
+      name: "Antimatter",
+      desc: "Shots trigger a delayed void explosion.",
+      icon: "💫",
+      cost: 800,
+      special: "voidBurst",
+      unlocksAtWave: 100,
+    },
   },
   cannon: {
-    xpToTier1: 7,
-    xpToTier2: 18,
-    tier1: {
+    passives: [
+      { tier: 1, xp: 7, stat: "damage", mult: 0.12, label: "+12% dmg" },
+      { tier: 2, xp: 16, stat: "splash", mult: 0.1, label: "+10% splash" },
+      { tier: 3, xp: 28, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 4, xp: 45, stat: "fireRate", mult: -0.1, label: "−10% cooldown" },
+      { tier: 6, xp: 80, stat: "damage", mult: 0.22, label: "+22% dmg" },
+      { tier: 7, xp: 110, stat: "splash", mult: 0.2, label: "+20% splash" },
+      { tier: 8, xp: 150, stat: "damage", mult: 0.3, label: "+30% dmg" },
+      {
+        tier: 9,
+        xp: 200,
+        stat: "fireRate",
+        mult: -0.15,
+        label: "−15% cooldown",
+      },
+    ],
+    skill5: {
+      xp: 58,
       A: {
         name: "Bombard",
         desc: "+60% splash radius",
@@ -97,16 +176,17 @@ export const TOWER_UPGRADES = {
       },
       B: {
         name: "Velocity",
-        desc: "+50% proj speed, -20% cd",
+        desc: "+50% proj speed, −20% cd",
         icon: "🚀",
         cost: 80,
         statDelta: { projectileSpeed: 0.5, fireRate: -0.2 },
       },
     },
-    tier2: {
+    skill10: {
+      xp: 250,
       A: {
         name: "Napalm",
-        desc: "Splash + burn 4s on hit",
+        desc: "Splash leaves burning ground",
         icon: "🔥",
         cost: 130,
         statDelta: { splash: 0.3 },
@@ -121,11 +201,48 @@ export const TOWER_UPGRADES = {
         special: "clusterShot",
       },
     },
+    legendary50: {
+      name: "Earthquake",
+      desc: "Every shot stuns nearby enemies 0.5s.",
+      icon: "🌋",
+      cost: 400,
+      special: "quakeStun",
+      unlocksAtWave: 50,
+    },
+    legendary100: {
+      name: "Nuke",
+      desc: "Every 8th shot = full-screen nuke.",
+      icon: "☢️",
+      cost: 800,
+      special: "nuke",
+      unlocksAtWave: 100,
+    },
   },
   laser: {
-    xpToTier1: 10,
-    xpToTier2: 25,
-    tier1: {
+    passives: [
+      { tier: 1, xp: 9, stat: "damage", mult: 0.12, label: "+12% dmg" },
+      { tier: 2, xp: 20, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 3, xp: 35, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      {
+        tier: 4,
+        xp: 55,
+        stat: "fireRate",
+        mult: -0.12,
+        label: "−12% cooldown",
+      },
+      { tier: 6, xp: 100, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 135, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 8, xp: 180, stat: "damage", mult: 0.32, label: "+32% dmg" },
+      {
+        tier: 9,
+        xp: 230,
+        stat: "fireRate",
+        mult: -0.15,
+        label: "−15% cooldown",
+      },
+    ],
+    skill5: {
+      xp: 70,
       A: {
         name: "Overclock",
         desc: "2× fire rate, +20% dmg",
@@ -141,7 +258,8 @@ export const TOWER_UPGRADES = {
         statDelta: { range: 0.5, damage: 0.3 },
       },
     },
-    tier2: {
+    skill10: {
+      xp: 280,
       A: {
         name: "Death Ray",
         desc: "Hits ALL enemies in range",
@@ -159,11 +277,60 @@ export const TOWER_UPGRADES = {
         special: "stunOnHit",
       },
     },
+    legendary50: {
+      name: "Solar Flare",
+      desc: "Every 10th shot blinds all enemies 2s.",
+      icon: "☀️",
+      cost: 400,
+      special: "solarBlind",
+      unlocksAtWave: 50,
+    },
+    legendary100: {
+      name: "Omega Ray",
+      desc: "Continuous beam hits entire path.",
+      icon: "🔆",
+      cost: 800,
+      special: "omegaBeam",
+      unlocksAtWave: 100,
+    },
   },
   freeze: {
-    xpToTier1: 8,
-    xpToTier2: 18,
-    tier1: {
+    passives: [
+      {
+        tier: 1,
+        xp: 7,
+        stat: "slowDuration",
+        mult: 0.12,
+        label: "+12% slow dur",
+      },
+      { tier: 2, xp: 16, stat: "damage", mult: 0.1, label: "+10% dmg" },
+      {
+        tier: 3,
+        xp: 28,
+        stat: "slowDuration",
+        mult: 0.18,
+        label: "+18% slow dur",
+      },
+      { tier: 4, xp: 45, stat: "range", mult: 0.1, label: "+10% range" },
+      {
+        tier: 6,
+        xp: 80,
+        stat: "slowDuration",
+        mult: 0.22,
+        label: "+22% slow dur",
+      },
+      { tier: 7, xp: 110, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      {
+        tier: 8,
+        xp: 150,
+        stat: "slowDuration",
+        mult: 0.28,
+        label: "+28% slow dur",
+      },
+      { tier: 9, xp: 200, stat: "range", mult: 0.15, label: "+15% range" },
+    ],
+    skill5: {
+      xp: 58,
       A: {
         name: "Deep Freeze",
         desc: "+50% slow duration",
@@ -176,11 +343,11 @@ export const TOWER_UPGRADES = {
         desc: "Area slow on fire",
         icon: "❄️",
         cost: 70,
-        statDelta: {},
         special: "areaFreeze",
       },
     },
-    tier2: {
+    skill10: {
+      xp: 250,
       A: {
         name: "Absolute",
         desc: "Freeze fully stops enemy",
@@ -194,15 +361,49 @@ export const TOWER_UPGRADES = {
         desc: "Frozen enemies take 2× dmg",
         icon: "💎",
         cost: 110,
-        statDelta: {},
         special: "shatterBuff",
       },
     },
+    legendary50: {
+      name: "Permafrost",
+      desc: "Slowed enemies also lose 30% armor.",
+      icon: "🌨️",
+      cost: 400,
+      special: "armorSlow",
+      unlocksAtWave: 50,
+    },
+    legendary100: {
+      name: "Ice Age",
+      desc: "On kill, freeze all nearby enemies 3s.",
+      icon: "🏔️",
+      cost: 800,
+      special: "iceAge",
+      unlocksAtWave: 100,
+    },
   },
   tesla: {
-    xpToTier1: 7,
-    xpToTier2: 17,
-    tier1: {
+    // Passive tiers — auto-applied on XP, no gold
+    passives: [
+      { tier: 1, xp: 8, stat: "damage", mult: 0.15, label: "+15% dmg" },
+      { tier: 2, xp: 18, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 3, xp: 32, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      {
+        tier: 4,
+        xp: 50,
+        stat: "fireRate",
+        mult: -0.12,
+        label: "−12% cooldown",
+      },
+      // tier 5 = skill A/B below
+      { tier: 6, xp: 90, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 120, stat: "chainTargets", flat: 1, label: "+1 chain" },
+      { tier: 8, xp: 160, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 9, xp: 210, stat: "damage", mult: 0.3, label: "+30% dmg" },
+      // tier 10 = skill A/B below
+    ],
+    // Active skill tiers — require gold, player chooses A or B
+    skill5: {
+      xp: 65,
       A: {
         name: "Conductor",
         desc: "+2 chain targets",
@@ -212,13 +413,14 @@ export const TOWER_UPGRADES = {
       },
       B: {
         name: "Surge",
-        desc: "+80% damage per chain",
+        desc: "+80% damage per arc",
         icon: "⚡",
         cost: 110,
         statDelta: { damage: 0.8 },
       },
     },
-    tier2: {
+    skill10: {
+      xp: 260,
       A: {
         name: "Storm",
         desc: "Chains to 8 targets",
@@ -235,11 +437,50 @@ export const TOWER_UPGRADES = {
         special: "chainStun",
       },
     },
+    // Legendary — unlocked by wave milestone, not XP
+    legendary50: {
+      name: "Godstorm",
+      desc: "Arcs pierce boss shields. +3 chains.",
+      icon: "☈",
+      cost: 400,
+      statDelta: { chainTargets: 3 },
+      special: "shieldPierce",
+      unlocksAtWave: 50,
+    },
+    legendary100: {
+      name: "Obliterator",
+      desc: "Every 5th arc triggers a full-screen pulse.",
+      icon: "💀",
+      cost: 800,
+      special: "arcPulse",
+      unlocksAtWave: 100,
+    },
   },
   inferno: {
-    xpToTier1: 9,
-    xpToTier2: 22,
-    tier1: {
+    passives: [
+      { tier: 1, xp: 8, stat: "burnDamage", flat: 1, label: "+1 burn/tick" },
+      { tier: 2, xp: 18, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 3, xp: 32, stat: "burnDamage", flat: 2, label: "+2 burn/tick" },
+      {
+        tier: 4,
+        xp: 50,
+        stat: "burnDuration",
+        mult: 0.15,
+        label: "+15% burn dur",
+      },
+      { tier: 6, xp: 90, stat: "burnDamage", flat: 3, label: "+3 burn/tick" },
+      { tier: 7, xp: 120, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 8, xp: 160, stat: "burnDamage", flat: 4, label: "+4 burn/tick" },
+      {
+        tier: 9,
+        xp: 210,
+        stat: "burnDuration",
+        mult: 0.25,
+        label: "+25% burn dur",
+      },
+    ],
+    skill5: {
+      xp: 65,
       A: {
         name: "Wildfire",
         desc: "+60% burn duration",
@@ -256,7 +497,8 @@ export const TOWER_UPGRADES = {
         special: "areaIgnite",
       },
     },
-    tier2: {
+    skill10: {
+      xp: 260,
       A: {
         name: "Hellfire",
         desc: "Burn stacks 3×",
@@ -267,18 +509,42 @@ export const TOWER_UPGRADES = {
       },
       B: {
         name: "Meltdown",
-        desc: "Burning = -40% armor",
+        desc: "Burning = −40% armor",
         icon: "⚗️",
         cost: 180,
-        statDelta: {},
         special: "armorMelt",
       },
     },
+    legendary50: {
+      name: "Phoenix Core",
+      desc: "Killed enemies explode, igniting neighbors.",
+      icon: "🦅",
+      cost: 400,
+      special: "deathIgnite",
+      unlocksAtWave: 50,
+    },
+    legendary100: {
+      name: "Supernova",
+      desc: "Every 6th shot = massive burn AoE.",
+      icon: "💢",
+      cost: 800,
+      special: "supernova",
+      unlocksAtWave: 100,
+    },
   },
   vortex: {
-    xpToTier1: 8,
-    xpToTier2: 20,
-    tier1: {
+    passives: [
+      { tier: 1, xp: 9, stat: "pullForce", flat: 0.1, label: "+0.1 pull" },
+      { tier: 2, xp: 20, stat: "splash", mult: 0.1, label: "+10% splash" },
+      { tier: 3, xp: 35, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 4, xp: 55, stat: "pullForce", flat: 0.15, label: "+0.15 pull" },
+      { tier: 6, xp: 100, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 135, stat: "splash", mult: 0.2, label: "+20% splash" },
+      { tier: 8, xp: 180, stat: "damage", mult: 0.32, label: "+32% dmg" },
+      { tier: 9, xp: 230, stat: "pullForce", flat: 0.2, label: "+0.2 pull" },
+    ],
+    skill5: {
+      xp: 70,
       A: {
         name: "Singularity",
         desc: "+50% pull, +40% splash",
@@ -294,13 +560,13 @@ export const TOWER_UPGRADES = {
         statDelta: { fireRate: -0.5, damage: 0.6 },
       },
     },
-    tier2: {
+    skill10: {
+      xp: 280,
       A: {
         name: "Void Rift",
-        desc: "Teleports enemies back",
+        desc: "Teleports enemies back 20%",
         icon: "🌌",
         cost: 200,
-        statDelta: {},
         special: "teleportBack",
       },
       B: {
@@ -310,6 +576,22 @@ export const TOWER_UPGRADES = {
         cost: 200,
         statDelta: { damage: 2.0 },
       },
+    },
+    legendary50: {
+      name: "Event Horizon",
+      desc: "Enemies in range can't move at all.",
+      icon: "⚫",
+      cost: 400,
+      special: "gravityLock",
+      unlocksAtWave: 50,
+    },
+    legendary100: {
+      name: "Big Crunch",
+      desc: "Every 5th shot pulls ALL enemies on map.",
+      icon: "🌑",
+      cost: 800,
+      special: "bigCrunch",
+      unlocksAtWave: 100,
     },
   },
 };

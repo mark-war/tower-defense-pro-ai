@@ -91,9 +91,14 @@ export class GameEngine {
     this.globalBuff = { fireRateMult: 1, damageMult: 1, timer: 0, label: "" };
 
     this.tick = 0;
+    this.shake = { x: 0, y: 0, frames: 0, intensity: 0 };
     this.animFrame = null;
     this.path = this._buildPath(this.mapDef.waypoints);
     this.pathCells = this._buildPathCells(this.mapDef.waypoints);
+
+    this._streakCount = 0;
+    this._streakTimer = 0;
+    this._streakWindow = 0;
   }
 
   _setupCanvas() {
@@ -169,7 +174,7 @@ export class GameEngine {
       return false;
     }
     const tDef = TOWER_TYPES[this.selectedTowerType];
-    const upgDef = TOWER_UPGRADES[this.selectedTowerType];
+
     const tower = {
       id: Date.now() + Math.random(),
       type: this.selectedTowerType,
@@ -194,20 +199,33 @@ export class GameEngine {
       armorPiercing: tDef.armorPiercing || false,
       burnDamage: tDef.burnDamage || 0,
       burnDuration: tDef.burnDuration || 0,
-      // Upgrade tracking
+      // Upgrade tracking — phased system
       xp: 0,
-      tier: 0, // 0=base, 1=tier1 chosen, 2=tier2 chosen
-      chosenPath: null, // 'A' or 'B'
-      tier2Path: null,
-      xpToTier1: upgDef?.xpToTier1 || 999,
-      xpToTier2: upgDef?.xpToTier2 || 999,
+      passiveTier: 0, // 0–9, which passive tiers have been applied
+      skill5chosen: null, // 'A' or 'B'
+      skill10chosen: null,
+      legendaryUnlocked: false,
+      legendary100Unlocked: false,
       upgradeReady: false, // XP threshold hit, awaiting player buy
-      // Specials from upgrades
-      specials: [],
+      upgradeReadyType: null, // 'passive' | 'skill5' | 'skill10' | 'legendary50' | 'legendary100'
+      specials: [], // Specials from upgrades
+
+      // _damageEnemy compat:
+      tier: 0,
+      chosenPath: null,
+      tier2Path: null,
+      xpToTier1: 999,
+      xpToTier2: 999,
+      // chosenPath: null, // 'A' or 'B'
+      // tier2Path: null,
+      // xpToTier1: upgDef?.xpToTier1 || 999,
+      // xpToTier2: upgDef?.xpToTier2 || 999,
+
       // Base copy for display
       baseDamage: tDef.damage,
       baseRange: tDef.range,
       baseFireRate: tDef.fireRate,
+
       // From def
       color: tDef.color,
       projectileColor: tDef.projectileColor,
@@ -263,55 +281,102 @@ export class GameEngine {
   }
 
   // ── TOWER UPGRADE ───────────────────────────────────────────────────────────
-  upgradeTower(col, row, tier, path) {
+  upgradeTower(col, row, skillType, path) {
     const tower = this.grid[row]?.[col];
     if (!tower) return false;
     const upgDef = TOWER_UPGRADES[tower.type];
     if (!upgDef) return false;
 
-    const tierDef = tier === 1 ? upgDef.tier1[path] : upgDef.tier2[path];
-    if (!tierDef) return false;
-    if (this.gold < tierDef.cost) {
+    let costDef;
+    if (skillType === "skill5") costDef = upgDef.skill5[path];
+    if (skillType === "skill10") costDef = upgDef.skill10[path];
+    if (skillType === "legendary50") costDef = upgDef.legendary50;
+    if (skillType === "legendary100") costDef = upgDef.legendary100;
+    if (!costDef) return false;
+
+    // Guard: can't buy if wrong prereqs
+    if (skillType === "skill5" && (tower.passiveTier < 4 || tower.skill5chosen))
+      return false;
+    if (
+      skillType === "skill10" &&
+      (!tower.skill5chosen || tower.passiveTier < 9 || tower.skill10chosen)
+    )
+      return false;
+    if (
+      skillType === "legendary50" &&
+      (!tower.skill10chosen || tower.legendaryUnlocked)
+    )
+      return false;
+    if (
+      skillType === "legendary100" &&
+      (!tower.legendaryUnlocked || tower.legendary100Unlocked)
+    )
+      return false;
+
+    if (this.gold < costDef.cost) {
       this._addFloatingText(
         tower.x,
         tower.y - 20,
-        `Need ${tierDef.cost}g`,
+        `Need ${costDef.cost}g`,
         "#ef4444",
       );
       return false;
     }
-    if (tier === 1 && tower.tier >= 1) return false;
-    if (tier === 2 && tower.tier < 1) return false;
-    if (tier === 2 && tower.tier >= 2) return false;
 
-    // Check XP unlock
-    if (tier === 1 && tower.xp < tower.xpToTier1) {
-      this._addFloatingText(
-        tower.x,
-        tower.y - 20,
-        "Not enough XP yet",
-        "#f97316",
+    this.gold -= costDef.cost;
+
+    // Apply stat deltas
+    const d = costDef.statDelta || {};
+    if (d.damage !== undefined) tower.damage *= 1 + d.damage;
+    if (d.range !== undefined) tower.range *= 1 + d.range;
+    if (d.fireRate !== undefined)
+      tower.fireRate = Math.max(
+        1,
+        Math.round(tower.fireRate * (1 + d.fireRate)),
       );
-      return false;
-    }
-    if (tier === 2 && tower.xp < tower.xpToTier2) {
-      this._addFloatingText(
-        tower.x,
-        tower.y - 20,
-        "Not enough XP yet",
-        "#f97316",
+    if (d.splash !== undefined) tower.splash *= 1 + d.splash;
+    if (d.pullForce !== undefined) tower.pullForce += d.pullForce;
+    if (d.slowDuration !== undefined)
+      tower.slowDuration = Math.round(
+        tower.slowDuration * (1 + d.slowDuration),
       );
-      return false;
+    if (d.chainTargets !== undefined) tower.chainTargets += d.chainTargets;
+    if (d.burnDamage !== undefined) tower.burnDamage += d.burnDamage;
+    if (d.burnDuration !== undefined)
+      tower.burnDuration = Math.round(
+        tower.burnDuration * (1 + d.burnDuration),
+      );
+    if (d.projectileSpeed !== undefined)
+      tower.projectileSpeed *= 1 + d.projectileSpeed;
+
+    if (costDef.special) {
+      tower.specials.push(costDef.special);
+      if (costDef.special === "armorPiercing") tower.armorPiercing = true;
     }
 
-    this.gold -= tierDef.cost;
-    this._applyUpgrade(tower, tierDef, tier, path);
-    this._addParticles(tower.x, tower.y, "#facc15", 18);
+    // Mark as chosen
+    if (skillType === "skill5") {
+      tower.skill5chosen = path;
+      tower.tier = 1;
+      tower.chosenPath = path;
+    }
+    if (skillType === "skill10") {
+      tower.skill10chosen = path;
+      tower.tier = 2;
+      tower.tier2Path = path;
+    }
+    if (skillType === "legendary50") tower.legendaryUnlocked = true;
+    if (skillType === "legendary100") tower.legendary100Unlocked = true;
+
+    tower.upgradeReady = false;
+    tower.upgradeReadyType = null;
+
+    this._addParticles(tower.x, tower.y, "#facc15", 20);
     this._addFloatingText(
       tower.x,
       tower.y - 20,
-      `↑ ${tierDef.name}!`,
-      "#facc15",
+      `✦ ${costDef.name}!`,
+      "#fbbf24",
     );
     this._emitState();
     return true;
@@ -825,6 +890,10 @@ export class GameEngine {
       specials: tower.specials || [],
       hasShatterSyn,
     });
+
+    // store last fire angle for barrel drawing
+    tower._drawAngle =
+      Math.atan2(target.y - tower.y, target.x - tower.x) + Math.PI / 2;
   }
 
   _updateProjectiles() {
@@ -906,6 +975,7 @@ export class GameEngine {
     if (proj?.specials?.includes("armorMelt") && enemy.burnTimer > 0)
       enemy.armor = Math.max(0, enemy.armor - 0.4);
     enemy.hp -= dmg;
+    if (enemy.isBoss && dmg > 50) this._triggerShake(4, 5);
     if (proj?.slowDuration && !enemy.immunities.includes(proj.towerType))
       enemy.slowTimer = proj.slowDuration;
     if (proj?.specials?.includes("stunOnHit")) {
@@ -933,18 +1003,92 @@ export class GameEngine {
       if (tower) {
         tower.totalDamage += dmg;
         tower.xp += Math.sqrt(dmg) * 0.4 + (enemy.isBoss ? 4 : 0.5);
-        if (tower.xp >= tower.xpToTier1 && tower.tier < 1)
-          tower.upgradeReady = true;
-        if (tower.xp >= tower.xpToTier2 && tower.tier === 1)
-          tower.upgradeReady = true;
+        this._checkTowerProgression(tower, this.wave);
       }
     }
     if (enemy.hp <= 0) this._killEnemy(enemy, proj?.towerType, proj?.towerId);
   }
 
+  _checkTowerProgression(tower, currentWave) {
+    const upgDef = TOWER_UPGRADES[tower.type];
+    if (!upgDef) return;
+
+    // Auto-apply passive tiers (no player input needed)
+    for (const passive of upgDef.passives) {
+      if (passive.tier <= tower.passiveTier) continue;
+      if (tower.xp < passive.xp) continue;
+      // apply it
+      if (passive.mult !== undefined) {
+        if (passive.stat === "fireRate")
+          tower.fireRate = Math.max(
+            1,
+            Math.round(tower.fireRate * (1 + passive.mult)),
+          );
+        else if (passive.stat === "chainTargets")
+          tower.chainTargets = (tower.chainTargets || 0) + (passive.flat || 0);
+        else tower[passive.stat] *= 1 + passive.mult;
+      }
+      if (passive.flat !== undefined && passive.stat !== "chainTargets") {
+        tower[passive.stat] = (tower[passive.stat] || 0) + passive.flat;
+      }
+      if (passive.stat === "chainTargets" && passive.flat) {
+        tower.chainTargets = (tower.chainTargets || 0) + passive.flat;
+      }
+      tower.passiveTier = passive.tier;
+      this._addFloatingText(tower.x, tower.y - 20, passive.label, "#38bdf8");
+    }
+
+    // Flag skill5 ready (tier 4 done, xp threshold met, not yet chosen)
+    const s5 = upgDef.skill5;
+    if (tower.passiveTier >= 4 && !tower.skill5chosen && tower.xp >= s5.xp) {
+      tower.upgradeReady = true;
+      tower.upgradeReadyType = "skill5";
+    }
+
+    // Flag skill10 ready (skill5 done, passive tier 9 done, xp met)
+    const s10 = upgDef.skill10;
+    if (
+      tower.skill5chosen &&
+      tower.passiveTier >= 9 &&
+      !tower.skill10chosen &&
+      tower.xp >= s10.xp
+    ) {
+      tower.upgradeReady = true;
+      tower.upgradeReadyType = "skill10";
+    }
+
+    // Legendary 50
+    const l50 = upgDef.legendary50;
+    if (
+      l50 &&
+      currentWave >= l50.unlocksAtWave &&
+      tower.skill10chosen &&
+      !tower.legendaryUnlocked
+    ) {
+      tower.upgradeReady = true;
+      tower.upgradeReadyType = "legendary50";
+    }
+
+    // Legendary 100
+    const l100 = upgDef.legendary100;
+    if (
+      l100 &&
+      currentWave >= l100.unlocksAtWave &&
+      tower.legendaryUnlocked &&
+      !tower.legendary100Unlocked
+    ) {
+      tower.upgradeReady = true;
+      tower.upgradeReadyType = "legendary100";
+    }
+  }
+
   _killEnemy(enemy, towerType, towerId) {
     const idx = this.enemies.indexOf(enemy);
     if (idx === -1) return;
+    // streak
+    this._streakWindow = 180; // 3s window resets on each kill
+    this._streakCount++;
+    this._streakTimer = 90;
     this.gold += enemy.reward;
     this.score += Math.floor(enemy.reward * this.wave * (enemy.isBoss ? 5 : 1));
     this.waveKills++;
@@ -1114,20 +1258,56 @@ export class GameEngine {
   _draw() {
     const ctx = this.ctx,
       map = this.mapDef;
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    const W = this.canvas.width,
+      H = this.canvas.height;
 
-    // Grid
-    for (let row = 0; row < GRID_ROWS; row++)
+    // ── Screen shake ──────────────────────────────────────────────────────────
+    ctx.save();
+    if (this.shake.frames > 0) {
+      this.shake.frames--;
+      this.shake.x = (Math.random() - 0.5) * this.shake.intensity;
+      this.shake.y = (Math.random() - 0.5) * this.shake.intensity;
+    } else {
+      this.shake.x = 0;
+      this.shake.y = 0;
+    }
+    ctx.translate(this.shake.x, this.shake.y);
+
+    ctx.clearRect(-10, -10, W + 20, H + 20);
+
+    // ── Background grid with scanlines ───────────────────────────────────────
+    for (let row = 0; row < GRID_ROWS; row++) {
       for (let col = 0; col < GRID_COLS; col++) {
         const isPath = this._isPathCell(col, row);
-        ctx.fillStyle = isPath ? map.theme.path : map.theme.bg;
-        ctx.fillRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
-        ctx.strokeStyle = isPath ? map.theme.pathBorder : "#1e293b";
+        const x = col * CELL_SIZE,
+          y = row * CELL_SIZE;
+        if (isPath) {
+          ctx.fillStyle = map.theme.path;
+          ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+          // subtle path glow
+          ctx.fillStyle = "rgba(255,255,255,0.03)";
+          ctx.fillRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+        } else {
+          // checkerboard depth
+          ctx.fillStyle =
+            (row + col) % 2 === 0 ? map.theme.bg : _shadeColor(map.theme.bg, 8);
+          ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+        }
+        // thin grid lines
+        ctx.strokeStyle = isPath
+          ? map.theme.pathBorder
+          : "rgba(255,255,255,0.03)";
         ctx.lineWidth = 0.5;
-        ctx.strokeRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+        ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
       }
+    }
 
-    // Path arrows
+    // scanline overlay — every 2 rows, faint dark line
+    ctx.fillStyle = "rgba(0,0,0,0.06)";
+    for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
+
+    // ── Path direction arrows ─────────────────────────────────────────────────
+    ctx.save();
     ctx.strokeStyle = map.theme.pathBorder;
     ctx.lineWidth = 1;
     for (let i = 0; i < this.path.length - 5; i += 10) {
@@ -1137,211 +1317,290 @@ export class GameEngine {
       ctx.save();
       ctx.translate(a.x, a.y);
       ctx.rotate(ang);
+      ctx.globalAlpha = 0.35;
       ctx.beginPath();
-      ctx.moveTo(-3, 0);
-      ctx.lineTo(3, 0);
-      ctx.lineTo(1, -2);
-      ctx.moveTo(3, 0);
-      ctx.lineTo(1, 2);
+      ctx.moveTo(-4, 0);
+      ctx.lineTo(4, 0);
+      ctx.lineTo(2, -3);
+      ctx.moveTo(4, 0);
+      ctx.lineTo(2, 3);
       ctx.stroke();
       ctx.restore();
     }
+    ctx.restore();
 
-    // Last-stand border pulse
+    // ── Last-stand pulsing border ─────────────────────────────────────────────
     if (this.lastStandActive) {
       const alpha = 0.3 + 0.3 * Math.sin(this.tick * 0.2);
       ctx.strokeStyle = `rgba(239,68,68,${alpha})`;
       ctx.lineWidth = 8;
-      ctx.strokeRect(4, 4, this.canvas.width - 8, this.canvas.height - 8);
+      ctx.strokeRect(4, 4, W - 8, H - 8);
     }
 
-    // Global buff banner
+    // ── Global buff banner ────────────────────────────────────────────────────
     if (this.globalBuff.timer > 0) {
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
-      ctx.fillRect(0, 0, this.canvas.width, 24);
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(0, 0, W, 26);
       ctx.fillStyle = "#fbbf24";
       ctx.font = "bold 12px monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(
         `${this.globalBuff.label}  [${Math.ceil(this.globalBuff.timer / 60)}s]`,
-        this.canvas.width / 2,
-        12,
+        W / 2,
+        13,
       );
     }
 
-    // Hover
+    // ── Hover highlight ───────────────────────────────────────────────────────
     if (this.hoveredCell && !["gameover", "victory"].includes(this.state)) {
       const { col, row } = this.hoveredCell;
       const check = this.canPlaceTower(col, row, this.selectedTowerType);
+      const cx = col * CELL_SIZE + CELL_SIZE / 2,
+        cy = row * CELL_SIZE + CELL_SIZE / 2;
       ctx.fillStyle = check.ok
-        ? "rgba(74,222,128,0.2)"
-        : "rgba(239,68,68,0.15)";
+        ? "rgba(74,222,128,0.15)"
+        : "rgba(239,68,68,0.12)";
       ctx.fillRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
       if (check.ok) {
         const tDef = TOWER_TYPES[this.selectedTowerType];
+        // filled range circle
         ctx.beginPath();
-        ctx.arc(
-          col * CELL_SIZE + CELL_SIZE / 2,
-          row * CELL_SIZE + CELL_SIZE / 2,
-          tDef.range,
-          0,
-          Math.PI * 2,
-        );
-        ctx.strokeStyle = "rgba(74,222,128,0.25)";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.fillStyle = "rgba(74,222,128,0.05)";
+        ctx.arc(cx, cy, tDef.range, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(74,222,128,0.04)";
         ctx.fill();
+        ctx.strokeStyle = "rgba(74,222,128,0.3)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
 
-    // Towers
+    // ── TOWERS ────────────────────────────────────────────────────────────────
     for (const tower of this.towers) {
-      const x = tower.col * CELL_SIZE,
-        y = tower.row * CELL_SIZE;
+      const cx = tower.x,
+        cy = tower.y;
       const isSelected =
         this.selectedTowerCell?.col === tower.col &&
         this.selectedTowerCell?.row === tower.row;
+      ctx.arc(
+        cx,
+        cy,
+        TOWER_TYPES[this.selectedTowerType].range,
+        0,
+        Math.PI * 2,
+      );
 
-      // Last-stand tint
+      // last-stand red tint
       if (this.lastStandActive) {
-        ctx.fillStyle = "rgba(239,68,68,0.15)";
-        ctx.fillRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+        ctx.fillStyle = "rgba(239,68,68,0.12)";
+        ctx.fillRect(
+          tower.col * CELL_SIZE + 1,
+          tower.row * CELL_SIZE + 1,
+          CELL_SIZE - 2,
+          CELL_SIZE - 2,
+        );
       }
 
-      ctx.fillStyle = "#1e293b";
-      ctx.fillRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-      ctx.strokeStyle = isSelected ? "#ffffff" : tower.color;
-      ctx.lineWidth = isSelected ? 2.5 : 2;
-      ctx.strokeRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+      // base platform
+      ctx.fillStyle = isSelected ? "#1e3050" : "#111827";
+      _roundRect(
+        ctx,
+        tower.col * CELL_SIZE + 2,
+        tower.row * CELL_SIZE + 2,
+        CELL_SIZE - 4,
+        CELL_SIZE - 4,
+        5,
+      );
+      ctx.fill();
 
-      // Tier badge
+      // selection/color border
+      ctx.strokeStyle = isSelected ? "#ffffff" : tower.color;
+      ctx.lineWidth = isSelected ? 2.5 : 1.5;
+      _roundRect(
+        ctx,
+        tower.col * CELL_SIZE + 2,
+        tower.row * CELL_SIZE + 2,
+        CELL_SIZE - 4,
+        CELL_SIZE - 4,
+        5,
+      );
+      ctx.stroke();
+
+      // upgrade-ready gold pulse
+      if (tower.upgradeReady) {
+        const pulse = 0.4 + 0.6 * Math.abs(Math.sin(this.tick * 0.12));
+        ctx.strokeStyle = `rgba(251,191,36,${pulse})`;
+        ctx.lineWidth = 2.5;
+        _roundRect(
+          ctx,
+          tower.col * CELL_SIZE + 1,
+          tower.row * CELL_SIZE + 1,
+          CELL_SIZE - 2,
+          CELL_SIZE - 2,
+          6,
+        );
+        ctx.stroke();
+      }
+
+      // ── Draw tower body (canvas shapes, no emoji) ─────────────────────────
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      // glow ring on cooldown flash
+      const coolPct = 1 - tower.cooldown / tower.fireRate;
+      if (coolPct > 0.85) {
+        ctx.globalAlpha = ((coolPct - 0.85) / 0.15) * 0.4;
+        ctx.fillStyle = tower.color;
+        ctx.beginPath();
+        ctx.arc(0, 0, 11, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      _drawTowerShape(ctx, tower, this.tick);
+      ctx.restore();
+
+      // range ring on select
+      if (isSelected) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, tower.range, 0, Math.PI * 2);
+        ctx.strokeStyle = tower.color + "55";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 5]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, tower.range, 0, Math.PI * 2);
+        ctx.fillStyle = tower.color + "08";
+        ctx.fill();
+      }
+
+      // tier badge
       if (tower.tier > 0) {
         ctx.fillStyle = tower.tier === 2 ? "#fbbf24" : "#38bdf8";
-        ctx.fillRect(x + CELL_SIZE - 10, y + 2, 9, 9);
+        ctx.beginPath();
+        ctx.arc(
+          tower.col * CELL_SIZE + CELL_SIZE - 6,
+          tower.row * CELL_SIZE + 6,
+          6,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
         ctx.fillStyle = "#000";
         ctx.font = "bold 7px monospace";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(`T${tower.tier}`, x + CELL_SIZE - 5.5, y + 6.5);
+        ctx.fillText(
+          `T${tower.tier}`,
+          tower.col * CELL_SIZE + CELL_SIZE - 6,
+          tower.row * CELL_SIZE + 6,
+        );
       }
 
-      // Upgrade ready glow
-      if (tower.upgradeReady) {
-        const pulse = 0.5 + 0.5 * Math.sin(this.tick * 0.15);
-        ctx.strokeStyle = `rgba(255,215,0,${pulse})`;
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
-        ctx.fillStyle = "#facc15";
-        ctx.font = "8px monospace";
-        ctx.textAlign = "center";
-        ctx.fillText("↑", x + CELL_SIZE / 2, y + CELL_SIZE - 4);
-      }
-
-      ctx.font = `${Math.round(CELL_SIZE * 0.52)}px serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(tower.icon, x + CELL_SIZE / 2, y + CELL_SIZE / 2);
-
-      // Cooldown bar
+      // cooldown bar
       if (tower.cooldown > 0) {
-        ctx.fillStyle = tower.color + "55";
+        const barW = (CELL_SIZE - 6) * (1 - tower.cooldown / tower.fireRate);
+        ctx.fillStyle = tower.color + "40";
         ctx.fillRect(
-          x + 2,
-          y + CELL_SIZE - 5,
-          (CELL_SIZE - 4) * (1 - tower.cooldown / tower.fireRate),
+          tower.col * CELL_SIZE + 3,
+          tower.row * CELL_SIZE + CELL_SIZE - 5,
+          CELL_SIZE - 6,
+          3,
+        );
+        ctx.fillStyle = tower.color;
+        ctx.fillRect(
+          tower.col * CELL_SIZE + 3,
+          tower.row * CELL_SIZE + CELL_SIZE - 5,
+          barW,
           3,
         );
       }
     }
 
-    // Enemies
+    // ── ENEMIES ───────────────────────────────────────────────────────────────
     for (const enemy of this.enemies) {
-      ctx.globalAlpha = enemy.stealth ? 0.45 : 1;
-      ctx.fillStyle = "rgba(0,0,0,0.35)";
-      ctx.beginPath();
-      ctx.ellipse(
-        enemy.x,
-        enemy.y + enemy.size * 0.75,
-        enemy.size * 0.75,
-        enemy.size * 0.28,
-        0,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
-      ctx.fillStyle = enemy.color;
-      ctx.beginPath();
-      ctx.arc(enemy.x, enemy.y, enemy.size, 0, Math.PI * 2);
-      ctx.fill();
-      if (enemy.isBoss) {
-        ctx.strokeStyle = enemy.phaseTriggered ? "#ff2200" : "#ff8800";
-        ctx.lineWidth = enemy.phaseTriggered ? 3 : 2;
-        ctx.beginPath();
-        ctx.arc(enemy.x, enemy.y, enemy.size + 5, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      ctx.save();
+      ctx.globalAlpha = enemy.stealth ? 0.38 : 1;
+      ctx.translate(enemy.x, enemy.y);
+
+      _drawEnemyShape(ctx, enemy, this.tick);
+
+      // status rings
       if (enemy.slowTimer > 0) {
         ctx.strokeStyle = "#a5f3fc";
         ctx.lineWidth = 2;
+        ctx.globalAlpha =
+          (enemy.stealth ? 0.38 : 1) * (0.6 + 0.4 * Math.sin(this.tick * 0.2));
         ctx.beginPath();
-        ctx.arc(enemy.x, enemy.y, enemy.size + 3, 0, Math.PI * 2);
+        ctx.arc(0, 0, enemy.size + 4, 0, Math.PI * 2);
         ctx.stroke();
       }
       if (enemy.burnTimer > 0) {
-        ctx.strokeStyle = `rgba(255,100,0,${0.4 + 0.4 * Math.sin(this.tick * 0.3)})`;
+        ctx.strokeStyle = `rgba(255,100,0,${0.5 + 0.5 * Math.sin(this.tick * 0.35)})`;
         ctx.lineWidth = 2;
+        ctx.globalAlpha = enemy.stealth ? 0.38 : 1;
         ctx.beginPath();
-        ctx.arc(enemy.x, enemy.y, enemy.size + 2, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      if (enemy.armor > 0.2) {
-        ctx.strokeStyle = "#94a3b8";
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(enemy.x, enemy.y, enemy.size * 0.68, 0, Math.PI * 2);
+        ctx.arc(0, 0, enemy.size + 3, 0, Math.PI * 2);
         ctx.stroke();
       }
       if (enemy.stunTimer > 0) {
         ctx.strokeStyle = "#fbbf24";
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.arc(enemy.x, enemy.y, enemy.size + 6, 0, Math.PI * 2);
+        ctx.arc(0, 0, enemy.size + 6, 0, Math.PI * 2);
         ctx.stroke();
+        // star sparks
+        for (let s = 0; s < 3; s++) {
+          const a = this.tick * 0.15 + s * ((Math.PI * 2) / 3);
+          ctx.fillStyle = "#fbbf24";
+          ctx.beginPath();
+          ctx.arc(
+            Math.cos(a) * (enemy.size + 9),
+            Math.sin(a) * (enemy.size + 9),
+            2,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+        }
       }
+      if (enemy.armor > 0.2) {
+        ctx.strokeStyle = "rgba(148,163,184,0.5)";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.arc(0, 0, enemy.size * 0.72, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.restore();
       ctx.globalAlpha = 1;
 
-      // Emoji icon
-      ctx.globalAlpha = enemy.stealth ? 0.6 : 1;
-      ctx.font = `${Math.round(enemy.size * 1.5)}px serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(enemy.icon, enemy.x, enemy.y);
-      ctx.globalAlpha = 1;
-
-      // IMMUNE label above stealth/immune enemies
+      // counter warning
       if (
         enemy.requiresCounter &&
         !this.towers.some((t) => t.type === enemy.requiresCounter)
       ) {
         ctx.fillStyle = "#ef4444";
-        ctx.font = "bold 9px monospace";
+        ctx.font = "bold 8px monospace";
         ctx.textAlign = "center";
-        ctx.fillText("⚠ NEED LASER", enemy.x, enemy.y - enemy.size - 14);
+        ctx.fillText("⚠ LASER", enemy.x, enemy.y - enemy.size - 14);
       }
 
-      // HP bar — boss gets wider bar + numeric HP display
+      // HP bar
       const bw = enemy.isBoss ? enemy.size * 3.8 : enemy.size * 2.6;
       const bh = enemy.isBoss ? 5 : 3;
       const bx = enemy.x - bw / 2,
         by = enemy.y - enemy.size - (enemy.isBoss ? 14 : 7);
-      ctx.fillStyle = "#0f172a";
-      ctx.fillRect(bx, by, bw, bh);
-      const r = enemy.hp / enemy.maxHp;
+      const r = Math.max(0, enemy.hp / enemy.maxHp);
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
       ctx.fillStyle = r > 0.55 ? "#4ade80" : r > 0.28 ? "#facc15" : "#ef4444";
       ctx.fillRect(bx, by, bw * r, bh);
-      // Boss: show numeric HP so player knows their damage is registering
       if (enemy.isBoss) {
         ctx.fillStyle = r > 0.28 ? "#fde68a" : "#fca5a5";
         ctx.font = "bold 9px monospace";
@@ -1351,56 +1610,45 @@ export class GameEngine {
           enemy.hp >= 1000
             ? `${(enemy.hp / 1000).toFixed(1)}k`
             : Math.ceil(enemy.hp);
-        const maxK =
-          enemy.maxHp >= 1000
-            ? `${(enemy.maxHp / 1000).toFixed(1)}k`
-            : Math.ceil(enemy.maxHp);
-        ctx.fillText(`${hpK} / ${maxK}`, enemy.x, by - 1);
+        ctx.fillText(
+          `${hpK} / ${enemy.maxHp >= 1000 ? `${(enemy.maxHp / 1000).toFixed(1)}k` : Math.ceil(enemy.maxHp)}`,
+          enemy.x,
+          by - 1,
+        );
         ctx.textBaseline = "alphabetic";
       }
     }
 
-    // Projectiles
+    // ── PROJECTILES ───────────────────────────────────────────────────────────
     for (const p of this.projectiles) {
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = p.color + "66";
-      ctx.beginPath();
-      ctx.arc(p.x - p.vx * 2, p.y - p.vy * 2, p.size * 0.55, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.save();
+      _drawProjectile(ctx, p, this.tick);
+      ctx.restore();
     }
 
-    // ── Tesla bolt effects ────────────────────────────────────────────────────
+    // ── TESLA BOLT EFFECTS ────────────────────────────────────────────────────
     for (const bolt of this.boltEffects) {
       const alpha = bolt.life / bolt.maxLife;
       ctx.save();
       ctx.globalAlpha = alpha;
-      ctx.strokeStyle = bolt.color;
-      ctx.lineWidth = 1.5 + alpha * 1.5;
       ctx.shadowColor = bolt.color;
-      ctx.shadowBlur = 8 + alpha * 6;
-      // Jagged two-segment arc through randomized midpoint
+      ctx.shadowBlur = 12 * alpha;
+      ctx.strokeStyle = bolt.color;
+      ctx.lineWidth = 1.5 + alpha * 2;
       ctx.beginPath();
       ctx.moveTo(bolt.x1, bolt.y1);
       ctx.lineTo(bolt.mx, bolt.my);
       ctx.lineTo(bolt.x2, bolt.y2);
       ctx.stroke();
-      // Inner bright core line
-      ctx.globalAlpha = alpha * 0.6;
-      ctx.strokeStyle = "#ffffff";
+      ctx.globalAlpha = alpha * 0.5;
+      ctx.strokeStyle = "#fff";
       ctx.lineWidth = 0.5;
       ctx.shadowBlur = 0;
-      ctx.beginPath();
-      ctx.moveTo(bolt.x1, bolt.y1);
-      ctx.lineTo(bolt.mx, bolt.my);
-      ctx.lineTo(bolt.x2, bolt.y2);
       ctx.stroke();
       ctx.restore();
     }
 
-    // Particles
+    // ── PARTICLES ─────────────────────────────────────────────────────────────
     for (const p of this.particles) {
       ctx.globalAlpha = p.life / p.maxLife;
       ctx.fillStyle = p.color;
@@ -1410,18 +1658,19 @@ export class GameEngine {
     }
     ctx.globalAlpha = 1;
 
-    // Floating texts
+    // ── FLOATING TEXTS ────────────────────────────────────────────────────────
     for (const t of this.floatingTexts) {
-      ctx.globalAlpha = t.life / 75;
+      const a = t.life / 75;
+      ctx.globalAlpha = a;
+      ctx.font = `bold ${10 + (1 - a) * 4}px monospace`;
       ctx.fillStyle = t.color;
-      ctx.font = "bold 12px monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "alphabetic";
       ctx.fillText(t.text, t.x, t.y);
     }
     ctx.globalAlpha = 1;
 
-    // Boss warning
+    // ── BOSS WARNING ──────────────────────────────────────────────────────────
     if (this.bossWarningTimer > 0) {
       this.bossWarningTimer--;
       const alpha =
@@ -1430,74 +1679,78 @@ export class GameEngine {
       const bDef = ENEMY_TYPES[this.bossWarningType];
       ctx.globalAlpha = alpha;
       ctx.fillStyle = "#1a0000";
-      ctx.fillRect(0, this.canvas.height / 2 - 44, this.canvas.width, 88);
+      ctx.fillRect(0, H / 2 - 50, W, 100);
       ctx.globalAlpha = Math.min(1, alpha * 2);
       ctx.fillStyle = "#ef4444";
-      ctx.font = "bold 26px monospace";
+      ctx.font = "bold 24px monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(
-        `⚠ BOSS: ${bDef?.name || "???"} ${bDef?.icon || "💀"} ⚠`,
-        this.canvas.width / 2,
-        this.canvas.height / 2 - 18,
-      );
+      ctx.fillText(`⚠ BOSS: ${bDef?.name || "???"} ⚠`, W / 2, H / 2 - 16);
       ctx.fillStyle = "#fca5a5";
-      ctx.font = "13px monospace";
+      ctx.font = "12px monospace";
       ctx.fillText(
         bDef?.weaknessHint || "Find its weakness!",
-        this.canvas.width / 2,
-        this.canvas.height / 2 + 4,
+        W / 2,
+        H / 2 + 6,
       );
       if (bDef?.immunities?.length) {
         ctx.fillStyle = "#f87171";
-        ctx.font = "11px monospace";
+        ctx.font = "10px monospace";
         ctx.fillText(
-          `IMMUNE TO: ${bDef.immunities.map((i) => TOWER_TYPES[i]?.name || i).join(", ")}`,
-          this.canvas.width / 2,
-          this.canvas.height / 2 + 22,
+          `IMMUNE: ${bDef.immunities.map((i) => TOWER_TYPES[i]?.name || i).join(", ")}`,
+          W / 2,
+          H / 2 + 24,
         );
       }
       ctx.globalAlpha = 1;
     }
 
-    // Endless wave badge
+    // ── ENDLESS BADGE ─────────────────────────────────────────────────────────
     if (this.isEndless && this.state === "wave") {
       ctx.fillStyle = "rgba(129,140,248,0.9)";
       ctx.font = "bold 11px monospace";
       ctx.textAlign = "right";
-      ctx.fillText(`∞ WAVE ${this.wave}`, this.canvas.width - 8, 18);
+      ctx.fillText(`∞ WAVE ${this.wave}`, W - 8, 18);
     }
 
-    // Overlays
+    // ── GAME OVER / VICTORY ───────────────────────────────────────────────────
     if (this.state === "gameover" || this.state === "victory") {
       const won = this.state === "victory";
-      ctx.fillStyle = "rgba(0,0,0,0.78)";
-      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      ctx.fillStyle = "rgba(0,0,0,0.82)";
+      ctx.fillRect(0, 0, W, H);
+      // animated title scale
+      const scale = 1 + 0.03 * Math.sin(this.tick * 0.08);
+      ctx.save();
+      ctx.translate(W / 2, H / 2 - 40);
+      ctx.scale(scale, scale);
       ctx.fillStyle = won ? "#4ade80" : "#ef4444";
-      ctx.font = "bold 44px monospace";
+      ctx.font = "bold 42px monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(
-        won ? "⚡ VICTORY! ⚡" : "💀 GAME OVER 💀",
-        this.canvas.width / 2,
-        this.canvas.height / 2 - 36,
-      );
+      ctx.fillText(won ? "VICTORY!" : "GAME OVER", 0, 0);
+      ctx.restore();
       ctx.fillStyle = "#94a3b8";
-      ctx.font = "17px monospace";
-      ctx.fillText(
-        `Score: ${this.score.toLocaleString()}`,
-        this.canvas.width / 2,
-        this.canvas.height / 2 + 10,
-      );
+      ctx.font = "16px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(`Score: ${this.score.toLocaleString()}`, W / 2, H / 2 + 10);
       ctx.fillText(
         this.isEndless
           ? `Survived ${this.wave} waves!`
           : won
-            ? "The AI could not stop you."
+            ? "The AI couldn't stop you."
             : "The AI has defeated you.",
-        this.canvas.width / 2,
-        this.canvas.height / 2 + 36,
+        W / 2,
+        H / 2 + 34,
       );
+    }
+
+    ctx.restore(); // pop shake transform
+  }
+
+  _triggerShake(intensity = 5, frames = 6) {
+    if (intensity > this.shake.intensity || this.shake.frames <= 0) {
+      this.shake.intensity = intensity;
+      this.shake.frames = frames;
     }
   }
 
@@ -1511,6 +1764,11 @@ export class GameEngine {
       this._checkWaveComplete();
     }
     this._updateParticles();
+    if (this._streakWindow > 0) {
+      this._streakWindow--;
+    } else {
+      this._streakCount = 0;
+    }
     this._draw();
     if (this.tick % 30 === 0) this._emitState();
     this.animFrame = requestAnimationFrame(() => this._loop());
@@ -1553,14 +1811,23 @@ export class GameEngine {
         kills: t.kills,
         damage: Math.floor(t.totalDamage),
         category: t.category,
-        tier: t.tier,
+
+        // new phased upgrade fields
+        passiveTier: t.passiveTier,
+        skill5chosen: t.skill5chosen,
+        skill10chosen: t.skill10chosen,
+        legendaryUnlocked: t.legendaryUnlocked,
+        legendary100Unlocked: t.legendary100Unlocked,
+        upgradeReady: t.upgradeReady,
+        upgradeReadyType: t.upgradeReadyType,
         xp: Math.floor(t.xp),
+        specials: t.specials,
+
+        tier: t.tier,
         xpToTier1: t.xpToTier1,
         xpToTier2: t.xpToTier2,
-        upgradeReady: t.upgradeReady,
         chosenPath: t.chosenPath,
         tier2Path: t.tier2Path,
-        specials: t.specials,
       })),
     });
   }
@@ -1593,4 +1860,747 @@ export class GameEngine {
   destroy() {
     if (this.animFrame) cancelAnimationFrame(this.animFrame);
   }
+}
+
+// ── Helper: rounded rect path ─────────────────────────────────────────────
+function _roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+// ── Helper: darken/lighten a hex color ───────────────────────────────────
+function _shadeColor(hex, amt) {
+  const num = parseInt(hex.replace("#", ""), 16);
+  const r = Math.min(255, Math.max(0, (num >> 16) + amt));
+  const g = Math.min(255, Math.max(0, ((num >> 8) & 0xff) + amt));
+  const b = Math.min(255, Math.max(0, (num & 0xff) + amt));
+  return `rgb(${r},${g},${b})`;
+}
+
+// ── Tower shape renderer ──────────────────────────────────────────────────
+// ctx is already translated to tower center
+function _drawTowerShape(ctx, tower, tick) {
+  const c = tower.color;
+  const s = CELL_SIZE * 0.38; // base size
+
+  ctx.strokeStyle = c;
+  ctx.fillStyle = c;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = c;
+  ctx.shadowBlur = 6;
+
+  switch (tower.type) {
+    case "basic": {
+      // rotating 4-barrel gatling look
+      const rot = tick * 0.04;
+      for (let i = 0; i < 4; i++) {
+        const a = rot + i * (Math.PI / 2);
+        ctx.save();
+        ctx.rotate(a);
+        ctx.fillStyle = c;
+        ctx.fillRect(-2, -s * 0.3, 4, s * 0.7);
+        ctx.restore();
+      }
+      // center hub
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.15, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case "sniper": {
+      // long single barrel pointing toward last target angle
+      const angle = tower._drawAngle || 0;
+      ctx.save();
+      ctx.rotate(angle);
+      // barrel
+      ctx.fillStyle = c;
+      ctx.fillRect(-2, -s * 0.9, 4, s * 0.9);
+      // scope
+      ctx.strokeStyle = c;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-5, -s * 0.55, 10, 6);
+      ctx.restore();
+      // base
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case "cannon": {
+      // squat wide barrel
+      const angle = tower._drawAngle || 0;
+      ctx.save();
+      ctx.rotate(angle);
+      ctx.fillStyle = c;
+      ctx.fillRect(-5, -s * 0.7, 10, s * 0.7);
+      // muzzle ring
+      ctx.strokeStyle = c;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, -s * 0.7, 6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.38, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case "laser": {
+      // 3-prong rotating dish
+      const rot = tick * 0.06;
+      for (let i = 0; i < 3; i++) {
+        const a = rot + i * ((Math.PI * 2) / 3);
+        ctx.save();
+        ctx.rotate(a);
+        ctx.fillStyle = c;
+        ctx.fillRect(-1.5, -s * 0.75, 3, s * 0.45);
+        ctx.restore();
+      }
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+      // pulsing core
+      const pulse = 0.5 + 0.5 * Math.sin(tick * 0.2);
+      ctx.globalAlpha = pulse * 0.7;
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    case "freeze": {
+      // snowflake 6 arms
+      const rot = tick * -0.02;
+      for (let i = 0; i < 6; i++) {
+        const a = rot + i * (Math.PI / 3);
+        ctx.save();
+        ctx.rotate(a);
+        ctx.strokeStyle = c;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, -s * 0.72);
+        ctx.stroke();
+        // branch lines
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-3, -s * 0.4);
+        ctx.lineTo(3, -s * 0.4);
+        ctx.moveTo(-2, -s * 0.58);
+        ctx.lineTo(2, -s * 0.58);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case "tesla": {
+      // coil rings + electric arc indicator
+      for (let ring = 1; ring <= 3; ring++) {
+        const r = ring * s * 0.22;
+        const alpha = 1 - ring * 0.25;
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = c;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      // lightning symbol in center
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.moveTo(3, -s * 0.3);
+      ctx.lineTo(-1, 0);
+      ctx.lineTo(3, 0);
+      ctx.lineTo(-3, s * 0.35);
+      ctx.lineTo(1, s * 0.05);
+      ctx.lineTo(-2, s * 0.05);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+
+    case "inferno": {
+      // rotating flame petals
+      const rot = tick * 0.05;
+      for (let i = 0; i < 5; i++) {
+        const a = rot + i * ((Math.PI * 2) / 5);
+        ctx.save();
+        ctx.rotate(a);
+        ctx.fillStyle = i % 2 === 0 ? c : "#ff6600";
+        ctx.beginPath();
+        ctx.ellipse(0, -s * 0.5, s * 0.15, s * 0.32, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      // core
+      ctx.fillStyle = "#ffdd00";
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case "vortex": {
+      // spiral arms
+      const rot = tick * 0.07;
+      for (let i = 0; i < 4; i++) {
+        const a = rot + i * (Math.PI / 2);
+        ctx.save();
+        ctx.rotate(a);
+        ctx.strokeStyle = c;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(s * 0.28, 0, s * 0.28, Math.PI * 0.6, Math.PI * 1.8);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.09, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    default: {
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.shadowBlur = 0;
+}
+
+// ── Enemy shape renderer ──────────────────────────────────────────────────
+// ctx is already translated to enemy center
+function _drawEnemyShape(ctx, enemy, tick) {
+  const c = enemy.color;
+  const r = enemy.size;
+
+  ctx.shadowColor = c;
+  ctx.shadowBlur = enemy.isBoss ? 14 : 6;
+
+  switch (enemy.type) {
+    case "basic": {
+      // hexagon grunt
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
+        i === 0
+          ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r)
+          : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = c;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    case "fast": {
+      // sharp diamond / arrowhead
+      const rot = tick * 0.1;
+      ctx.save();
+      ctx.rotate(rot);
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 1.3);
+      ctx.lineTo(r * 0.7, r * 0.6);
+      ctx.lineTo(0, r * 0.3);
+      ctx.lineTo(-r * 0.7, r * 0.6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      // speed trail dots
+      ctx.globalAlpha = 0.3;
+      for (let i = 1; i <= 3; i++) {
+        ctx.fillStyle = c;
+        ctx.beginPath();
+        ctx.arc(0, r * i * 0.7, r * 0.2 * (1 - i * 0.25), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    case "armored": {
+      // square with corner bolts (tank feel)
+      ctx.fillStyle = c;
+      const rr = r * 0.9;
+      ctx.fillRect(-rr, -rr, rr * 2, rr * 2);
+      ctx.fillStyle = "#64748b";
+      for (const [dx, dy] of [
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+        [1, 1],
+      ]) {
+        ctx.beginPath();
+        ctx.arc(dx * rr * 0.7, dy * rr * 0.7, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = "#94a3b8";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-rr, -rr, rr * 2, rr * 2);
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(-r * 0.35, -r * 0.35, r * 0.7, r * 0.7);
+      break;
+    }
+
+    case "swarm": {
+      // tiny organic circle with 3 spikes
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+      const spikeRot = tick * 0.12;
+      for (let i = 0; i < 3; i++) {
+        const a = spikeRot + i * ((Math.PI * 2) / 3);
+        ctx.fillStyle = c;
+        ctx.save();
+        ctx.rotate(a);
+        ctx.beginPath();
+        ctx.moveTo(0, -r * 0.8);
+        ctx.lineTo(r * 0.25, -r * 1.5);
+        ctx.lineTo(-r * 0.25, -r * 1.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      break;
+    }
+
+    case "stealth": {
+      // ghostly wispy ring with inner core
+      ctx.globalAlpha = 0.7;
+      ctx.strokeStyle = c;
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i < 3; i++) {
+        const a = tick * 0.05 * (i % 2 === 0 ? 1 : -1);
+        ctx.save();
+        ctx.rotate(a);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r, r * 0.55, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    case "spread": {
+      // flower/brood shape — petals
+      for (let i = 0; i < 6; i++) {
+        const a = tick * 0.02 + i * (Math.PI / 3);
+        ctx.save();
+        ctx.rotate(a);
+        ctx.fillStyle = i % 2 === 0 ? c : "#f0abfc";
+        ctx.beginPath();
+        ctx.ellipse(0, -r * 0.7, r * 0.3, r * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    // ── Bosses ──────────────────────────────────────────────────────────────
+
+    case "boss_colossus": {
+      // thick armored walker
+      const pulse = 0.8 + 0.2 * Math.sin(tick * 0.1);
+      ctx.fillStyle = enemy.phaseTriggered ? "#ff2200" : c;
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const rr = i % 2 === 0 ? r : r * 0.7;
+        i === 0
+          ? ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr)
+          : ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      ctx.closePath();
+      ctx.fill();
+      // armor rings
+      ctx.strokeStyle = "#94a3b8";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.85 * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      if (enemy.phaseTriggered) {
+        ctx.globalAlpha = 0.4 + 0.3 * Math.sin(tick * 0.25);
+        ctx.strokeStyle = "#ff2200";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(0, 0, r + 6, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      break;
+    }
+
+    case "boss_phantom": {
+      // stealth wraith with rotating rings
+      const rot = tick * 0.06;
+      for (let i = 0; i < 3; i++) {
+        ctx.save();
+        ctx.rotate(rot + i * ((Math.PI * 2) / 3));
+        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(tick * 0.08 + i);
+        ctx.strokeStyle = c;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 1.1, r * 0.5, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case "boss_titan": {
+      // hive hexagon + spawning indicator ring
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        i === 0
+          ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r)
+          : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      ctx.closePath();
+      ctx.fill();
+      // inner cells
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        ctx.fillStyle = "#0f172a";
+        ctx.beginPath();
+        ctx.arc(
+          Math.cos(a) * r * 0.55,
+          Math.sin(a) * r * 0.55,
+          r * 0.22,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+      // spawn ring pulse
+      const spawnPulse = 0.3 + 0.4 * Math.abs(Math.sin(tick * 0.07));
+      ctx.globalAlpha = spawnPulse;
+      ctx.strokeStyle = "#fb923c";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, r + 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    case "boss_voidreaper": {
+      // void orb with dark tentacles
+      const rot = tick * 0.04;
+      for (let i = 0; i < 8; i++) {
+        const a = rot + i * (Math.PI / 4);
+        const len = r * (0.9 + 0.3 * Math.sin(tick * 0.1 + i));
+        ctx.save();
+        ctx.rotate(a);
+        ctx.strokeStyle = c;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath();
+        ctx.moveTo(0, -r * 0.5);
+        ctx.quadraticCurveTo(r * 0.4, -r * 0.7, 0, -len);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.65, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+      const glowAlpha = 0.4 + 0.3 * Math.sin(tick * 0.12);
+      ctx.globalAlpha = glowAlpha;
+      ctx.fillStyle = "#818cf8";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    default: {
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.shadowBlur = 0;
+}
+
+// ── Projectile renderer ───────────────────────────────────────────────────
+function _drawProjectile(ctx, p, tick) {
+  // const spd = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+
+  switch (p.towerType) {
+    case "basic": {
+      // glowing green bullet with short trail
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 8;
+      for (let t = 1; t <= 4; t++) {
+        ctx.globalAlpha = (0.15 * (5 - t)) / 4;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(
+          p.x - p.vx * t * 1.2,
+          p.y - p.vy * t * 1.2,
+          p.size * (1 - t * 0.18),
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(
+        p.x - p.size * 0.3,
+        p.y - p.size * 0.3,
+        p.size * 0.28,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+      break;
+    }
+
+    case "sniper": {
+      // white tracer streak — thin and fast
+      ctx.shadowColor = "#ffffff";
+      ctx.shadowBlur = 10;
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(p.x - p.vx * 5, p.y - p.vy * 5);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case "cannon": {
+      // spinning orange fireball
+      // const angle = Math.atan2(p.vy, p.vx) + tick * 0.3;
+      ctx.shadowColor = "#ff6600";
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      // hot core
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = "#ffdd00";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      // smoke trail
+      ctx.globalAlpha = 0.2;
+      ctx.fillStyle = "#aaa";
+      for (let t = 1; t <= 3; t++) {
+        ctx.beginPath();
+        ctx.arc(
+          p.x - p.vx * t * 2,
+          p.y - p.vy * t * 2,
+          p.size * (1 - t * 0.25),
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    case "laser": {
+      // beam line from origin to tip
+      const dx = p.x - (p.originX || p.x);
+      const dy = p.y - (p.originY || p.y);
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len > 1) {
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(p.originX || p.x, p.originY || p.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.5;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#fff";
+      ctx.shadowBlur = 4;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case "freeze": {
+      // spinning ice crystal
+      ctx.shadowColor = "#a5f3fc";
+      ctx.shadowBlur = 10;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(tick * 0.18);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.moveTo(0, -p.size * 2);
+      ctx.lineTo(p.size * 1.2, 0);
+      ctx.lineTo(0, p.size * 2);
+      ctx.lineTo(-p.size * 1.2, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#e0f9ff";
+      ctx.beginPath();
+      ctx.arc(0, 0, p.size * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      break;
+    }
+
+    case "inferno": {
+      // fireball with orange glow
+      ctx.shadowColor = "#ff2200";
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * 1.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffee00";
+      ctx.shadowBlur = 4;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = "#ff6600";
+      ctx.beginPath();
+      ctx.arc(p.x - p.vx * 2.5, p.y - p.vy * 2.5, p.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    case "vortex": {
+      // swirling purple orb
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * 1.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff44";
+      ctx.lineWidth = 1;
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * 0.8, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+    }
+
+    default: {
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
 }

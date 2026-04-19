@@ -596,6 +596,9 @@ export class WaveAI {
     bossType,
     progress,
   ) {
+    let bossDelay = 0;
+    let bossLane = 0;
+
     const validComp = composition.filter(
       (c) => c.weight > 0 && ENEMY_TYPES[c.type],
     );
@@ -653,7 +656,7 @@ export class WaveAI {
         bossPhase = r < 0.33 ? "early" : r < 0.66 ? "mid" : "late";
       }
 
-      let bossDelay;
+      bossDelay = Math.max(80, bossDelay);
 
       if (bossPhase === "early") {
         bossDelay = totalWaveDuration * 0.25;
@@ -662,8 +665,6 @@ export class WaveAI {
       } else {
         bossDelay = totalWaveDuration * 0.75;
       }
-
-      bossDelay = Math.max(80, bossDelay);
 
       const bossLane = Math.random() < 0.5 ? 0 : 1;
 
@@ -699,6 +700,65 @@ export class WaveAI {
           speedMult,
           rewardMult,
           spawnDelay: bossDelay + 60,
+        });
+      }
+    }
+
+    // ── Second boss — random on wave 20+, scheduled on milestones ─────────────
+    const allBossTypes = [
+      "boss_colossus",
+      "boss_phantom",
+      "boss_titan",
+      "boss_voidreaper",
+    ];
+    const eligibleSecond = allBossTypes.filter(
+      (b) => b !== bossType && ENEMY_TYPES[b],
+    );
+
+    let secondBossType = null;
+    if (waveNumber >= 20 && eligibleSecond.length > 0) {
+      const isMilestone = waveNumber % 10 === 0;
+      const roll = Math.random();
+      // milestone waves always get a second boss; otherwise 25% chance, rising 1% per wave past 20
+      const chance = isMilestone
+        ? 1.0
+        : Math.min(0.7, 0.25 + (waveNumber - 20) * 0.01);
+      if (roll < chance) {
+        secondBossType =
+          eligibleSecond[Math.floor(Math.random() * eligibleSecond.length)];
+      }
+    }
+
+    if (secondBossType) {
+      // Spawn the second boss at the opposite phase from the first
+      const secondDelay =
+        bossDelay > totalWaveDuration * 0.5
+          ? totalWaveDuration * 0.25 // first was late, second comes early
+          : totalWaveDuration * 0.75; // first was early, second comes late
+
+      const secondHpMult = hpMult * 0.75 * ADMIN_CONFIG.ai.bossHpScaling; // slightly weaker than main boss
+      const secondLane = bossLane === 0 ? 1 : 0; // opposite lane
+
+      enemies.push({
+        type: secondBossType,
+        hpMult: secondHpMult,
+        speedMult: 1,
+        rewardMult: 1.5, // worth more gold since harder fight
+        spawnDelay: Math.max(80, secondDelay),
+        isBoss: true,
+        lane: secondLane,
+      });
+
+      // lean escort for second boss too
+      const secondEscort = progress > 0.5 ? "armored" : "fast";
+      for (let i = 0; i < 2; i++) {
+        enemies.push({
+          type: secondEscort,
+          hpMult,
+          speedMult,
+          rewardMult,
+          spawnDelay: Math.max(80, secondDelay) + i * 10,
+          lane: secondLane,
         });
       }
     }

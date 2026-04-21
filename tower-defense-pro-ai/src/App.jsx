@@ -10,7 +10,8 @@ export default function App() {
   const [selectedTower, setSelected] = useState("basic");
   const [activeTab, setActiveTab] = useState("build");
   const [sellMode, setSellMode] = useState(false);
-  const [currentLevel, setCurrentLevel] = useState(1);
+  const [currentLevel, setCurrentLevel] = useState(99); // default to last level for easy testing
+  const [inspectedEnemy, setInspectedEnemy] = useState(null);
 
   // ── Boot ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -21,7 +22,7 @@ export default function App() {
         // Expose selectedTowerCell on state for HUD
         setGameState({ ...s, selectedTowerCell: engine.selectedTowerCell });
       },
-      1,
+      99, // default to last level for easy testing
     );
     engineRef.current = engine;
     return () => engine.destroy();
@@ -42,6 +43,20 @@ export default function App() {
   const handleClick = useCallback(
     (e) => {
       if (!engineRef.current) return;
+
+      const rect = canvasRef.current.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+
+      // Check for enemy click first during wave
+      if (gameState?.state === "wave") {
+        const enemy = engineRef.current?.getEnemyAtPixel(px, py);
+        if (enemy) {
+          setInspectedEnemy(enemy);
+          return;
+        }
+      }
+
       const { col, row } = getCell(e);
       if (sellMode) {
         engineRef.current.sellTower(col, row);
@@ -65,7 +80,7 @@ export default function App() {
         }
       }
     },
-    [sellMode, activeTab, getCell],
+    [sellMode, activeTab, getCell, gameState?.state],
   );
 
   const handleMouseMove = useCallback(
@@ -191,7 +206,7 @@ export default function App() {
 
       {/* HUD */}
       <HUD
-        gameState={gameState}
+        gameState={{ ...gameState, inspectedEnemy }}
         selectedTower={selectedTower}
         activeTab={activeTab}
         sellMode={sellMode}
@@ -204,6 +219,7 @@ export default function App() {
         onUpgrade={handleUpgrade}
         onTriggerAbility={handleTriggerAbility}
         onTowerCellClick={handleTowerCellClick}
+        onClearEnemyInspect={() => setInspectedEnemy(null)}
       />
     </div>
   );

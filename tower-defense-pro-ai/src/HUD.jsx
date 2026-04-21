@@ -29,6 +29,7 @@ export function HUD({
   onUpgrade,
   onTriggerAbility,
   onTowerCellClick,
+  onClearEnemyInspect,
 }) {
   const [confirmLevel, setConfirmLevel] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -75,6 +76,7 @@ export function HUD({
     globalBuff,
     lastStandActive,
     towers = [],
+    inspectedEnemy,
   } = gameState;
 
   const gm = getGlobalMemory();
@@ -134,6 +136,14 @@ export function HUD({
         position: "relative",
       }}
     >
+      {/* ── ENEMY INSPECT PANEL ───────────────────────────────────────────── */}
+      {inspectedEnemy && (
+        <EnemyInspectPanel
+          enemy={inspectedEnemy}
+          onClose={() => onClearEnemyInspect()}
+        />
+      )}
+
       {/* ── CONFIRM LEVEL CHANGE DIALOG ──────────────────────────────────── */}
       {confirmLevel && (
         <div
@@ -1516,6 +1526,7 @@ function SkillBtn({
   );
 }
 
+// Upgrade panel for a selected tower, showing passive tiers and skill choices.
 function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
   const def = TOWER_TYPES[tower.type];
   const upgDef = TOWER_UPGRADES[tower.type];
@@ -1711,14 +1722,34 @@ function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
               ? "(complete skill 10 first)"
               : currentWave < l50.unlocksAtWave
                 ? `(reach wave ${l50.unlocksAtWave})`
-                : ""}
+                : tower.legendaryUnlocked
+                  ? `✓ ${tower.legendary50Path === "A" ? l50.A?.name : l50.B?.name} chosen`
+                  : "Choose one:"}
           </div>
           <SkillBtn
             skillType="legendary50"
             path="A"
-            skillDef={l50}
-            locked={!tower.skill10chosen || currentWave < l50.unlocksAtWave}
-            taken={tower.legendaryUnlocked}
+            skillDef={l50?.A}
+            locked={
+              !tower.skill10chosen ||
+              currentWave < l50.unlocksAtWave ||
+              (tower.legendaryUnlocked && tower.legendary50Path !== "A")
+            }
+            taken={tower.legendaryUnlocked && tower.legendary50Path === "A"}
+            gold={gold}
+            onUpgrade={onUpgrade}
+            tower={tower}
+          />
+          <SkillBtn
+            skillType="legendary50"
+            path="B"
+            skillDef={l50?.B}
+            locked={
+              !tower.skill10chosen ||
+              currentWave < l50.unlocksAtWave ||
+              (tower.legendaryUnlocked && tower.legendary50Path !== "B")
+            }
+            taken={tower.legendaryUnlocked && tower.legendary50Path === "B"}
             gold={gold}
             onUpgrade={onUpgrade}
             tower={tower}
@@ -1737,14 +1768,35 @@ function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
               marginTop: 10,
             }}
           >
-            ✦✦ LEGENDARY (wave {l100.unlocksAtWave}+)
+            ✦✦ LEGENDARY (wave {l100.unlocksAtWave}+){" "}
+            {currentWave < l100.unlocksAtWave
+              ? `(reach wave ${l100.unlocksAtWave})`
+              : tower.legendary100Unlocked
+                ? `✓ ${tower.legendary100Path === "A" ? l100.A?.name : l100.B?.name} chosen`
+                : "Choose one:"}
           </div>
           <SkillBtn
             skillType="legendary100"
             path="A"
-            skillDef={l100}
-            locked={currentWave < l100.unlocksAtWave}
-            taken={tower.legendary100Unlocked}
+            skillDef={l100?.A}
+            locked={
+              currentWave < l100.unlocksAtWave ||
+              (tower.legendary100Unlocked && tower.legendary100Path !== "A")
+            }
+            taken={tower.legendary100Unlocked && tower.legendary100Path === "A"}
+            gold={gold}
+            onUpgrade={onUpgrade}
+            tower={tower}
+          />
+          <SkillBtn
+            skillType="legendary100"
+            path="B"
+            skillDef={l100?.B}
+            locked={
+              currentWave < l100.unlocksAtWave ||
+              (tower.legendary100Unlocked && tower.legendary100Path !== "B")
+            }
+            taken={tower.legendary100Unlocked && tower.legendary100Path === "B"}
             gold={gold}
             onUpgrade={onUpgrade}
             tower={tower}
@@ -1758,6 +1810,263 @@ function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
           <span style={{ color: "#818cf8" }}>{tower.specials.join(", ")}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Enemy Inspect Panel ─────────────────────────────────────────────────────
+function EnemyInspectPanel({ enemy, onClose }) {
+  if (!enemy) return null;
+  const def = ENEMY_TYPES[enemy.type];
+  const hpPct = Math.max(0, enemy.hp / enemy.maxHp);
+
+  const statusBadge = (active, color, label) =>
+    active ? (
+      <span
+        style={{
+          fontSize: 8,
+          padding: "1px 5px",
+          background: color + "22",
+          color,
+          border: `1px solid ${color}`,
+          borderRadius: 3,
+          marginRight: 3,
+        }}
+      >
+        {label}
+      </span>
+    ) : null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: "rgba(0,0,0,0.6)",
+        zIndex: 200,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#0d1117",
+          border: `2px solid ${enemy.isBoss ? "#ef4444" : "#334155"}`,
+          borderRadius: 8,
+          padding: "14px 16px",
+          width: 260,
+          fontFamily: "'Courier New', monospace",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 10,
+          }}
+        >
+          <span style={{ fontSize: 28 }}>{enemy.icon}</span>
+          <div style={{ flex: 1 }}>
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: "bold",
+                color: enemy.isBoss ? "#fca5a5" : "#e2e8f0",
+              }}
+            >
+              {enemy.name} {enemy.isBoss && "💀"}
+            </div>
+            <div style={{ fontSize: 9, color: "#6b7280" }}>{def?.desc}</div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#475569",
+              fontSize: 14,
+              cursor: "pointer",
+              padding: "2px 6px",
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* HP bar */}
+        <div style={{ marginBottom: 8 }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 9,
+              color: "#6b7280",
+              marginBottom: 2,
+            }}
+          >
+            <span>HP</span>
+            <span>
+              {enemy.hp} / {enemy.maxHp}
+            </span>
+          </div>
+          <div style={{ height: 6, background: "#1e293b", borderRadius: 3 }}>
+            <div
+              style={{
+                height: "100%",
+                width: `${hpPct * 100}%`,
+                background:
+                  hpPct > 0.55
+                    ? "#4ade80"
+                    : hpPct > 0.28
+                      ? "#facc15"
+                      : "#ef4444",
+                borderRadius: 3,
+                transition: "width 0.1s",
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Stats grid */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "4px 10px",
+            marginBottom: 8,
+          }}
+        >
+          {[
+            [
+              "Armor",
+              enemy.armor > 0 ? `${Math.round(enemy.armor * 100)}%` : "None",
+              enemy.armor > 0.3 ? "#fca5a5" : "#94a3b8",
+            ],
+            ["Speed", enemy.speed, "#facc15"],
+            [
+              "Stealth",
+              enemy.stealth ? "YES" : "No",
+              enemy.stealth ? "#a78bfa" : "#374151",
+            ],
+            [
+              "Phase",
+              enemy.phaseTriggered ? "ACTIVE" : "Normal",
+              enemy.phaseTriggered ? "#ff4444" : "#374151",
+            ],
+          ].map(([label, val, color]) => (
+            <div key={label}>
+              <div style={{ fontSize: 8, color: "#475569" }}>{label}</div>
+              <div style={{ fontSize: 11, fontWeight: "bold", color }}>
+                {val}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Active status effects */}
+        <div style={{ marginBottom: 8 }}>
+          {statusBadge(
+            enemy.slowTimer > 0,
+            "#a5f3fc",
+            `❄ SLOWED (${Math.ceil(enemy.slowTimer / 60)}s)`,
+          )}
+          {statusBadge(
+            enemy.stunTimer > 0,
+            "#fbbf24",
+            `⚡ STUNNED (${Math.ceil(enemy.stunTimer / 60)}s)`,
+          )}
+          {statusBadge(
+            enemy.burnTimer > 0,
+            "#f97316",
+            `🔥 BURNING${enemy.burnStacks > 1 ? ` ×${enemy.burnStacks}` : ""}`,
+          )}
+        </div>
+
+        {/* Immunities / weakness */}
+        {(def?.immunities?.length > 0 || def?.weakness) && (
+          <div
+            style={{
+              marginBottom: 8,
+              display: "flex",
+              gap: 3,
+              flexWrap: "wrap",
+            }}
+          >
+            {def.immunities?.map((im) => (
+              <span
+                key={im}
+                style={{
+                  fontSize: 8,
+                  padding: "1px 5px",
+                  background: "#3a1a1a",
+                  color: "#fca5a5",
+                  border: "1px solid #7f1d1d",
+                  borderRadius: 3,
+                }}
+              >
+                🚫 {TOWER_TYPES[im]?.name || im}
+              </span>
+            ))}
+            {def?.weakness && (
+              <span
+                style={{
+                  fontSize: 8,
+                  padding: "1px 5px",
+                  background: "#0f2a0f",
+                  color: "#86efac",
+                  border: "1px solid #166534",
+                  borderRadius: 3,
+                }}
+              >
+                ✓ {TOWER_TYPES[def.weakness]?.name}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Lore / tip */}
+        {def?.lore && (
+          <div
+            style={{
+              fontSize: 9,
+              color: "#4b5563",
+              lineHeight: 1.5,
+              marginBottom: 6,
+              fontStyle: "italic",
+            }}
+          >
+            "{def.lore}"
+          </div>
+        )}
+        {def?.tip && (
+          <div
+            style={{
+              fontSize: 9,
+              color: "#fbbf24",
+              lineHeight: 1.5,
+              padding: "4px 6px",
+              background: "#1a1a0a",
+              borderRadius: 4,
+              border: "1px solid #3a3000",
+            }}
+          >
+            💡 {def.tip}
+          </div>
+        )}
+
+        {/* Distance traveled */}
+        <div style={{ fontSize: 8, color: "#374151", marginTop: 6 }}>
+          Distance traveled: {enemy.distanceTraveled}px
+        </div>
+      </div>
     </div>
   );
 }

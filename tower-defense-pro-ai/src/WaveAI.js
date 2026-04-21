@@ -1,6 +1,6 @@
 // ──────────────────────────────────────────────────────────────────────────────
 //  WaveAI — learns across waves AND across game sessions (via persistent memory)
-//  Every new game feeds the same AI brain, making it progressively smarter.
+//  FIXES: endless progress (was always 0), boss plan key prefix, adaptation log
 // ──────────────────────────────────────────────────────────────────────────────
 import {
   ENEMY_TYPES,
@@ -11,15 +11,14 @@ import {
 
 const CFG = ADMIN_CONFIG.ai;
 
-// ── Persistent cross-game memory (survives resets in same browser tab) ────────
 let GLOBAL_MEMORY = {
   gamesPlayed: 0,
-  towerUsageHistory: {}, // cumulative tower usage across all games
-  weaknessSuccessRate: {}, // which exploits actually leaked enemies
-  strategyCounterHistory: {}, // what countered each strategy
-  playerTendencies: {}, // long-term behavioral patterns
+  towerUsageHistory: {},
+  weaknessSuccessRate: {},
+  strategyCounterHistory: {},
+  playerTendencies: {},
   totalWavesSurvived: 0,
-  bossEncounters: {}, // how player handled each boss type
+  bossEncounters: {},
 };
 
 export function getGlobalMemory() {
@@ -31,7 +30,6 @@ export class WaveAI {
     this.levelConfig = levelConfig;
     this.bossWaves = levelConfig?.bossWaves || {};
 
-    // Per-game profile
     this.playerProfile = {
       towerCounts: {},
       towerPositions: [],
@@ -49,18 +47,14 @@ export class WaveAI {
     this.currentWave = 0;
     this.exploitAttempts = {};
 
-    // Import cross-game knowledge (decayed)
     this._applyGlobalMemory();
   }
 
-  // ── Absorb cross-game memory ────────────────────────────────────────────────
   _applyGlobalMemory() {
     const decay = CFG.crossGameMemoryDecay;
     const gm = GLOBAL_MEMORY;
 
-    // If the AI has played enough games, bias its initial assessment
     if (gm.gamesPlayed >= 2) {
-      // Pre-seed weaknesses from history
       const seeded = [];
       for (const [weakness, rate] of Object.entries(gm.weaknessSuccessRate)) {
         if (rate * decay > 0.4) seeded.push(weakness);
@@ -71,7 +65,6 @@ export class WaveAI {
     }
   }
 
-  // ── Record tower placement ──────────────────────────────────────────────────
   recordTowerPlacement(towerType, gridPos) {
     const p = this.playerProfile;
     p.towerCounts[towerType] = (p.towerCounts[towerType] || 0) + 1;
@@ -80,13 +73,10 @@ export class WaveAI {
       pos: gridPos,
       wave: this.currentWave,
     });
-
-    // Update global memory
     GLOBAL_MEMORY.towerUsageHistory[towerType] =
       (GLOBAL_MEMORY.towerUsageHistory[towerType] || 0) + 1;
   }
 
-  // ── Record wave results ─────────────────────────────────────────────────────
   recordWaveResults({
     enemiesKilled,
     enemiesLeaked,
@@ -112,7 +102,6 @@ export class WaveAI {
     });
     this._analyzePlayer();
 
-    // Update global success rates for exploits attempted this wave
     const lastLog = this.adaptationLog[this.adaptationLog.length - 1];
     if (lastLog) {
       for (const w of lastLog.weaknesses || []) {
@@ -124,7 +113,6 @@ export class WaveAI {
     GLOBAL_MEMORY.totalWavesSurvived++;
   }
 
-  // ── Record boss encounter result ────────────────────────────────────────────
   recordBossResult(bossType, killed, towerUsed) {
     const bm = GLOBAL_MEMORY.bossEncounters;
     if (!bm[bossType])
@@ -136,12 +124,10 @@ export class WaveAI {
     }
   }
 
-  // ── Finalize a game ─────────────────────────────────────────────────────────
   finalizeGame(won) {
     GLOBAL_MEMORY.gamesPlayed++;
     const p = this.playerProfile;
 
-    // Blend long-term tendencies
     for (const [type, count] of Object.entries(p.towerCounts)) {
       GLOBAL_MEMORY.playerTendencies[type] =
         (GLOBAL_MEMORY.playerTendencies[type] || 0) * 0.6 + count * 0.4;
@@ -154,20 +140,17 @@ export class WaveAI {
     }
   }
 
-  // ── Deep player analysis ────────────────────────────────────────────────────
   _analyzePlayer() {
     const counts = this.playerProfile.towerCounts;
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     if (total === 0) return;
 
-    // Blend global tendencies (decayed) with current game
     const blended = { ...counts };
     for (const [type, val] of Object.entries(GLOBAL_MEMORY.playerTendencies)) {
       blended[type] =
         (blended[type] || 0) + val * CFG.crossGameMemoryDecay * 0.3;
     }
 
-    // Dominant strategy
     let maxRatio = 0,
       dominant = null;
     const blendTotal = Object.values(blended).reduce((a, b) => a + b, 0);
@@ -180,10 +163,8 @@ export class WaveAI {
     }
     if (maxRatio > 0.28) this.playerProfile.preferredStrategy = dominant;
 
-    // Compute spread score
     this.playerProfile.towerSpread = this._calculateTowerSpread();
 
-    // Build weakness list
     const w = [];
     if ((counts.basic || 0) + (counts.sniper || 0) > (counts.cannon || 0) * 2.5)
       w.push("swarm");
@@ -203,7 +184,10 @@ export class WaveAI {
     )
       w.push("spread");
 
-    // Boost weaknesses the AI knows have worked historically
+    // Also detect if player is ignoring a damage type
+    if (!counts.tesla && total > 5) w.push("armored");
+    if (!counts.cannon && total > 5) w.push("swarm");
+
     const boosted = [...new Set(w)].sort((a, b) => {
       const ra = GLOBAL_MEMORY.weaknessSuccessRate[a] || 0.5;
       const rb = GLOBAL_MEMORY.weaknessSuccessRate[b] || 0.5;
@@ -229,45 +213,50 @@ export class WaveAI {
     return Math.min(totalDist / count / 15, 1);
   }
 
-  // ── Generate wave ───────────────────────────────────────────────────────────
+  // ── Generate wave ─────────────────────────────────────────────────────────
   generateWave(waveNumber, totalWaves) {
     this.currentWave = waveNumber;
 
-    // ✅ ALWAYS define progress first
-    const progress = totalWaves ? waveNumber / totalWaves : 0;
+    // FIX: Endless mode has totalWaves=Infinity → progress was always 0.
+    // Use a 30-wave rolling cycle so AI adapts every ~10 waves.
+    const isEndless = !isFinite(totalWaves);
+    const progress = isEndless
+      ? Math.min(0.95, ((waveNumber - 1) % 30) / 30)
+      : totalWaves
+        ? waveNumber / totalWaves
+        : 0;
 
-    // ✅ scaling
     const baseCountRaw = Math.floor(12 + waveNumber * 5);
-    const intensity = 1 + progress * 0.8;
+    const intensity =
+      1 + progress * 0.8 + (isEndless ? Math.floor(waveNumber / 30) * 0.15 : 0);
     const baseCount = Math.floor(baseCountRaw * intensity);
 
-    const hpMult = 1 + waveNumber * CFG.enemyHpPerWave;
-    const speedMult = 1 + waveNumber * CFG.enemySpeedPerWave;
+    const hpMult =
+      1 + waveNumber * (isEndless ? CFG.endlessHpPerWave : CFG.enemyHpPerWave);
+    const speedMult =
+      1 +
+      waveNumber *
+        (isEndless ? CFG.endlessSpeedPerWave : CFG.enemySpeedPerWave);
 
-    // ✅ boss logic
     let bossType = this.bossWaves[waveNumber] || null;
-    if (!bossType) {
-      bossType = this._endlessBossForWave(waveNumber);
-    }
-
+    if (!bossType) bossType = this._endlessBossForWave(waveNumber);
     if (progress > 0.75 && !bossType && waveNumber % 3 === 0) {
       bossType = this._endlessBossForWave(waveNumber);
     }
 
     const plan = this._buildAdaptationPlan(waveNumber, bossType, progress);
 
-    // ✅ phase message (defined ONCE)
     const phaseMsg =
-      progress < 0.3
-        ? "Analyzing defenses..."
-        : progress < 0.7
+      progress < 0.25
+        ? "Analyzing your defenses..."
+        : progress < 0.5
           ? "Adapting to your strategy..."
-          : "Executing final assault.";
+          : progress < 0.75
+            ? "Exploiting weaknesses..."
+            : "Final assault. No mercy.";
 
-    // ✅ final message (safe)
-    const finalMessage = `${phaseMsg} ${plan.message || ""}`;
+    const finalMessage = `${phaseMsg} ${plan.message || ""}`.trim();
 
-    // ✅ early waves
     if (waveNumber <= CFG.minWavesBeforeAdapt) {
       const comp =
         waveNumber === 1
@@ -283,13 +272,12 @@ export class WaveAI {
         baseCount,
         hpMult,
         speedMult,
-        finalMessage, // ✅ use same message
+        finalMessage,
         bossType,
         progress,
       );
     }
 
-    // ✅ normal waves
     const waveData = this._buildWave(
       waveNumber,
       plan.composition,
@@ -306,15 +294,12 @@ export class WaveAI {
       strategy: this.playerProfile.preferredStrategy,
       weaknesses: [...this.playerProfile.weaknesses],
       bossType,
-      message: finalMessage, // ✅ better than plan.message
+      message: finalMessage,
     });
 
     return waveData;
   }
 
-  // ── Minimum tower requirement calculation ───────────────────────────────────
-  // AI determines the minimum towers you NEED to survive its strategy.
-  // This is surfaced to the player as a warning.
   calcMinimumRequiredTowers(waveNumber) {
     const reqs = {};
     const w = this.playerProfile.weaknesses;
@@ -324,7 +309,6 @@ export class WaveAI {
       const bDef = ENEMY_TYPES[boss];
       if (bDef) {
         reqs[bDef.weakness] = Math.max(reqs[bDef.weakness] || 0, 2);
-        // Also recommend support
         if (bDef.phaseAt) reqs["freeze"] = Math.max(reqs["freeze"] || 0, 1);
       }
     }
@@ -337,43 +321,45 @@ export class WaveAI {
     return reqs;
   }
 
-  // ── Build adaptation plan ───────────────────────────────────────────────────
   _buildAdaptationPlan(waveNumber, bossType, progress) {
-    if (bossType) {
-      return this._bossWavePlan(bossType, waveNumber);
-    }
+    if (bossType) return this._bossWavePlan(bossType, waveNumber);
+
     const { weaknesses, preferredStrategy } = this.playerProfile;
 
-    // Early game: don't over-adapt yet
-    if (progress < 0.3) {
-      return this._escalationWave(waveNumber);
-    }
+    if (progress < 0.25) return this._escalationWave(waveNumber);
 
-    // Mid game: start exploiting
-    if (progress < 0.7 && weaknesses.length > 0) {
+    if (progress < 0.5 && weaknesses.length > 0) {
       const targeted =
         weaknesses.find(
           (w) => (this.exploitAttempts[w] || 0) < CFG.maxExploitAttempts,
         ) || weaknesses[0];
-
       this.exploitAttempts[targeted] =
         (this.exploitAttempts[targeted] || 0) + 1;
-
       return this._exploitWeakness(targeted, waveNumber);
     }
 
-    // Late game: be brutal
-    if (progress >= 0.7) {
-      return this._lateGamePressure(waveNumber, weaknesses);
+    if (progress >= 0.5 && progress < 0.75) {
+      if (preferredStrategy)
+        return this._counterStrategy(preferredStrategy, waveNumber);
+      if (weaknesses.length > 0) {
+        const targeted =
+          weaknesses[
+            Math.floor(Math.random() * Math.min(2, weaknesses.length))
+          ];
+        this.exploitAttempts[targeted] =
+          (this.exploitAttempts[targeted] || 0) + 1;
+        return this._exploitWeakness(targeted, waveNumber);
+      }
     }
 
-    if (preferredStrategy)
-      return this._counterStrategy(preferredStrategy, waveNumber);
+    if (progress >= 0.75) return this._lateGamePressure(waveNumber, weaknesses);
+
     return this._escalationWave(waveNumber);
   }
 
   _lateGamePressure(waveNumber, weaknesses) {
     const primary = weaknesses[0];
+    const secondary = weaknesses[1];
 
     const aggressive = {
       swarm: [
@@ -394,39 +380,72 @@ export class WaveAI {
       ],
     };
 
+    // Mix two weaknesses if available for maximum pressure
+    let comp = aggressive[primary] || [
+      { type: "fast", weight: 6 },
+      { type: "armored", weight: 4 },
+    ];
+    if (secondary && aggressive[secondary]) {
+      comp = [
+        ...aggressive[primary].map((e) => ({
+          ...e,
+          weight: Math.ceil(e.weight * 0.6),
+        })),
+        ...aggressive[secondary].map((e) => ({
+          ...e,
+          weight: Math.ceil(e.weight * 0.4),
+        })),
+      ];
+    }
+
     return {
-      composition: aggressive[primary] || [
-        { type: "fast", weight: 6 },
-        { type: "armored", weight: 4 },
-      ],
-      message: `⚠ AI escalating: Full exploitation of your defenses.`,
+      composition: comp,
+      message: `⚠ FINAL PUSH: Dual exploitation — ${primary || "overwhelming force"}.`,
     };
   }
 
+  // FIX: Added "boss_" prefix to all plan keys
   _bossWavePlan(bossType, waveNumber) {
     const plans = {
-      colossus: {
+      boss_colossus: {
         composition: [
           { type: "armored", weight: 6 },
           { type: "basic", weight: 3 },
           { type: "fast", weight: 1 },
         ],
-        message: `⚠ COLOSSUS detected: Reinforced escort incoming.`,
+        message: `⚠ COLOSSUS: Armored escort inbound. Tesla required.`,
       },
-      voidreaper: {
+      boss_phantom: {
+        composition: [
+          { type: "stealth", weight: 7 },
+          { type: "fast", weight: 3 },
+        ],
+        message: `⚠ PHANTOM LORD: Ghost vanguard. Laser is your only counter.`,
+      },
+      boss_titan: {
+        composition: [
+          { type: "swarm", weight: 8 },
+          { type: "basic", weight: 4 },
+        ],
+        message: `⚠ TITAN HIVE: Swarm carpet. Cannon splash critical.`,
+      },
+      boss_voidreaper: {
         composition: [
           { type: "stealth", weight: 5 },
           { type: "fast", weight: 3 },
           { type: "armored", weight: 2 },
         ],
-        message: `⚠ VOIDREAPER detected: Phase units approaching.`,
+        message: `⚠ VOID REAPER: Phase vanguard. Inferno required.`,
       },
     };
-
     return plans[bossType] || this._escalationWave(waveNumber);
   }
 
   _exploitWeakness(weakness, waveNumber) {
+    const gamesStr =
+      GLOBAL_MEMORY.gamesPlayed > 0
+        ? ` [${GLOBAL_MEMORY.gamesPlayed} runs]`
+        : "";
     const plans = {
       swarm: {
         composition: [
@@ -434,28 +453,28 @@ export class WaveAI {
           { type: "basic", weight: 2 },
           { type: "spread", weight: waveNumber > 5 ? 2 : 0 },
         ],
-        message: `AI Memory [${GLOBAL_MEMORY.gamesPlayed} games]: You struggle with swarms. Flooding with numbers.`,
+        message: `AI${gamesStr}: Swarm flood. No cannon coverage detected.`,
       },
       fast: {
         composition: [
           { type: "fast", weight: 7 },
           { type: "swarm", weight: 3 },
         ],
-        message: `AI Memory: No Cryo coverage detected. High-speed raid incoming.`,
+        message: `AI${gamesStr}: No Cryo detected. High-speed raid.`,
       },
       armored: {
         composition: [
           { type: "armored", weight: 6 },
           { type: "basic", weight: 4 },
         ],
-        message: `AI Memory: Insufficient armor-pierce. Deploying armored column.`,
+        message: `AI${gamesStr}: Insufficient armor-pierce. Steel column.`,
       },
       stealth: {
         composition: [
           { type: "stealth", weight: 7 },
           { type: "fast", weight: 3 },
         ],
-        message: `AI Memory: No Laser towers. Stealth infiltrators will pass unseen.`,
+        message: `AI${gamesStr}: No Laser towers. Ghosts will pass unseen.`,
       },
       spread: {
         composition: [
@@ -463,7 +482,7 @@ export class WaveAI {
           { type: "stealth", weight: 3 },
           { type: "swarm", weight: 5 },
         ],
-        message: `AI Memory: Clustered defenses. Multi-type flanking assault.`,
+        message: `AI${gamesStr}: Clustered defenses. Multi-vector flanking.`,
       },
       boss_colossus: {
         composition: [
@@ -471,7 +490,7 @@ export class WaveAI {
           { type: "basic", weight: 3 },
           { type: "fast", weight: 2 },
         ],
-        message: `AI Memory: Colossus incoming. Your anti-armor is insufficient.`,
+        message: `AI${gamesStr}: Anti-armor insufficient. Colossus prep.`,
       },
       boss_voidreaper: {
         composition: [
@@ -479,13 +498,17 @@ export class WaveAI {
           { type: "armored", weight: 3 },
           { type: "fast", weight: 2 },
         ],
-        message: `AI Memory: Void energy detected. Prepare for void-class vanguard.`,
+        message: `AI${gamesStr}: Void vanguard. Inferno critical.`,
       },
     };
     return plans[weakness] || this._escalationWave(waveNumber);
   }
 
   _counterStrategy(strategy, waveNumber) {
+    const gamesStr =
+      GLOBAL_MEMORY.gamesPlayed > 0
+        ? ` [${GLOBAL_MEMORY.gamesPlayed} runs]`
+        : "";
     const counters = {
       basic: {
         composition: [
@@ -493,14 +516,14 @@ export class WaveAI {
           { type: "fast", weight: 3 },
           { type: "stealth", weight: 2 },
         ],
-        message: `AI adapting to GUNNER spam: Mixed hard targets. Balance isn't enough.`,
+        message: `Counter${gamesStr}: GUNNER spam → Mixed hard targets.`,
       },
       sniper: {
         composition: [
           { type: "swarm", weight: 8 },
           { type: "fast", weight: 4 },
         ],
-        message: `AI adapting to SNIPER spam: Volume overwhelms precision. Swarm rush.`,
+        message: `Counter${gamesStr}: SNIPER spam → Volume beats precision.`,
       },
       cannon: {
         composition: [
@@ -508,42 +531,42 @@ export class WaveAI {
           { type: "spread", weight: 2 },
           { type: "stealth", weight: 2 },
         ],
-        message: `AI adapting to CANNON spam: Speed and stealth dodge your splash zones.`,
+        message: `Counter${gamesStr}: CANNON spam → Speed + stealth dodge splash.`,
       },
       laser: {
         composition: [
           { type: "armored", weight: 6 },
           { type: "spread", weight: 2 },
         ],
-        message: `AI adapting to LASER spam: Armor absorbs your beams. Heavy push.`,
+        message: `Counter${gamesStr}: LASER spam → Armor absorbs beams.`,
       },
       freeze: {
         composition: [
           { type: "armored", weight: 5 },
           { type: "fast", weight: 3 },
         ],
-        message: `AI adapting to CRYO spam: Cold-immune heavies lead the push.`,
+        message: `Counter${gamesStr}: CRYO spam → Cold-immune heavies.`,
       },
       tesla: {
         composition: [
           { type: "stealth", weight: 6 },
           { type: "spread", weight: 3 },
         ],
-        message: `AI adapting to TESLA spam: Stealth units break your chain logic.`,
+        message: `Counter${gamesStr}: TESLA spam → Stealth breaks chain logic.`,
       },
       inferno: {
         composition: [
           { type: "armored", weight: 7 },
           { type: "basic", weight: 3 },
         ],
-        message: `AI adapting to INFERNO spam: Armor resists burn. Steel column incoming.`,
+        message: `Counter${gamesStr}: INFERNO spam → Armor resists burn.`,
       },
       vortex: {
         composition: [
           { type: "fast", weight: 5 },
           { type: "stealth", weight: 4 },
         ],
-        message: `AI adapting to VORTEX spam: Speed and stealth escape your gravity well.`,
+        message: `Counter${gamesStr}: VORTEX spam → Speed + stealth escape gravity.`,
       },
     };
     return counters[strategy] || this._escalationWave(waveNumber);
@@ -574,6 +597,11 @@ export class WaveAI {
         { type: "swarm", weight: 5 },
         { type: "fast", weight: 2 },
       ],
+      [
+        { type: "stealth", weight: 5 },
+        { type: "fast", weight: 3 },
+        { type: "basic", weight: 2 },
+      ],
     ];
     const gamesStr =
       GLOBAL_MEMORY.gamesPlayed > 0
@@ -581,11 +609,10 @@ export class WaveAI {
         : "";
     return {
       composition: patterns[waveNumber % patterns.length],
-      message: `Wave ${waveNumber}${gamesStr}: Escalating pressure...`,
+      message: `Wave ${waveNumber}${gamesStr}: Escalating...`,
     };
   }
 
-  // ── Build wave ──────────────────────────────────────────────────────────────
   _buildWave(
     waveNumber,
     composition,
@@ -605,22 +632,20 @@ export class WaveAI {
     const totalWeight = validComp.reduce((s, c) => s + c.weight, 0);
     const enemies = [];
     let globalDelay = 0;
-    const delayFactor = Math.max(0.5, 1 - progress * 0.5);
+    const delayFactor = Math.max(0.4, 1 - progress * 0.55);
 
-    // Gold scales: +7% per wave on top of base reward
     const rewardMult = 1 + (waveNumber - 1) * 0.07;
 
-    // Burst config: enemies in groups of GROUP_SIZE, tight inside, gap between groups
     const GROUP_SIZE = 4;
-    const INTRA_DELAY = 10; // frames between enemies within a burst
-    const INTER_DELAY = 65; // frames between bursts / enemy types
+    const INTRA_DELAY = 10;
+    const INTER_DELAY = 65;
 
     for (const entry of validComp) {
       const count = Math.max(
         1,
         Math.round((entry.weight / totalWeight) * baseCount),
       );
-      const lane = Math.random() < 0.7 ? 0 : 1; // 70% main lane, 30% alt
+      const lane = Math.random() < 0.7 ? 0 : 1;
       for (let i = 0; i < count; i++) {
         enemies.push({
           type: entry.type,
@@ -630,45 +655,29 @@ export class WaveAI {
           spawnDelay: globalDelay,
           lane,
         });
-        // Short gap inside burst, longer gap at burst boundary
         globalDelay +=
           ((i + 1) % GROUP_SIZE === 0 ? INTER_DELAY : INTRA_DELAY) *
           delayFactor;
       }
-      globalDelay += INTER_DELAY * delayFactor; // always gap between different enemy types
+      globalDelay += INTER_DELAY * delayFactor;
     }
 
     const totalWaveDuration = globalDelay;
-    // Inject boss DURING the wave instead of always at the end
+
     if (bossType && ENEMY_TYPES[bossType]) {
       const bossHpMult = hpMult * 0.9 * ADMIN_CONFIG.ai.bossHpScaling;
 
-      let bossPhase;
-      if (this.playerProfile.weaknesses.includes("early")) {
-        bossPhase = "early";
-      } else if (this.playerProfile.weaknesses.includes("mid")) {
-        bossPhase = "mid";
-      } else if (this.playerProfile.weaknesses.includes("late")) {
-        bossPhase = "late";
-      } else {
-        // fallback randomness
-        const r = Math.random();
-        bossPhase = r < 0.33 ? "early" : r < 0.66 ? "mid" : "late";
-      }
+      const r = Math.random();
+      const bossPhase = r < 0.33 ? "early" : r < 0.66 ? "mid" : "late";
 
-      bossDelay = Math.max(80, bossDelay);
+      if (bossPhase === "early")
+        bossDelay = Math.max(80, totalWaveDuration * 0.2);
+      else if (bossPhase === "mid")
+        bossDelay = Math.max(80, totalWaveDuration * 0.5);
+      else bossDelay = Math.max(80, totalWaveDuration * 0.75);
 
-      if (bossPhase === "early") {
-        bossDelay = totalWaveDuration * 0.25;
-      } else if (bossPhase === "mid") {
-        bossDelay = totalWaveDuration * 0.5;
-      } else {
-        bossDelay = totalWaveDuration * 0.75;
-      }
+      bossLane = Math.random() < 0.5 ? 0 : 1;
 
-      const bossLane = Math.random() < 0.5 ? 0 : 1;
-
-      // Insert boss
       enemies.push({
         type: bossType,
         hpMult: bossHpMult,
@@ -679,11 +688,20 @@ export class WaveAI {
         lane: bossLane,
       });
 
-      const escortType =
-        progress > 0.6 ? (Math.random() < 0.5 ? "fast" : "shield") : "tank";
-      for (let i = 0; i < 3; i++) {
+      // Enhanced escort based on boss type
+      const escortConfig = {
+        boss_colossus: { type: "armored", count: 4 },
+        boss_phantom: { type: "stealth", count: 3 },
+        boss_titan: { type: "swarm", count: 6 },
+        boss_voidreaper: { type: "fast", count: 4 },
+      };
+      const escort = escortConfig[bossType] || {
+        type: progress > 0.6 ? "fast" : "basic",
+        count: 3,
+      };
+      for (let i = 0; i < escort.count; i++) {
         enemies.push({
-          type: escortType,
+          type: escort.type,
           hpMult,
           speedMult,
           rewardMult,
@@ -692,7 +710,6 @@ export class WaveAI {
         });
       }
 
-      // Optional: small "breathing space" after boss
       if (progress < 0.5) {
         enemies.push({
           type: "basic",
@@ -704,7 +721,7 @@ export class WaveAI {
       }
     }
 
-    // ── Second boss — random on wave 20+, scheduled on milestones ─────────────
+    // Second boss on milestone waves (wave 20+)
     const allBossTypes = [
       "boss_colossus",
       "boss_phantom",
@@ -714,42 +731,38 @@ export class WaveAI {
     const eligibleSecond = allBossTypes.filter(
       (b) => b !== bossType && ENEMY_TYPES[b],
     );
-
     let secondBossType = null;
+
     if (waveNumber >= 20 && eligibleSecond.length > 0) {
       const isMilestone = waveNumber % 10 === 0;
-      const roll = Math.random();
-      // milestone waves always get a second boss; otherwise 25% chance, rising 1% per wave past 20
       const chance = isMilestone
         ? 1.0
         : Math.min(0.7, 0.25 + (waveNumber - 20) * 0.01);
-      if (roll < chance) {
+      if (Math.random() < chance) {
         secondBossType =
           eligibleSecond[Math.floor(Math.random() * eligibleSecond.length)];
       }
     }
 
     if (secondBossType) {
-      // Spawn the second boss at the opposite phase from the first
       const secondDelay =
         bossDelay > totalWaveDuration * 0.5
-          ? totalWaveDuration * 0.25 // first was late, second comes early
-          : totalWaveDuration * 0.75; // first was early, second comes late
+          ? Math.max(80, totalWaveDuration * 0.25)
+          : Math.max(80, totalWaveDuration * 0.75);
 
-      const secondHpMult = hpMult * 0.75 * ADMIN_CONFIG.ai.bossHpScaling; // slightly weaker than main boss
-      const secondLane = bossLane === 0 ? 1 : 0; // opposite lane
+      const secondHpMult = hpMult * 0.75 * ADMIN_CONFIG.ai.bossHpScaling;
+      const secondLane = bossLane === 0 ? 1 : 0;
 
       enemies.push({
         type: secondBossType,
         hpMult: secondHpMult,
         speedMult: 1,
-        rewardMult: 1.5, // worth more gold since harder fight
-        spawnDelay: Math.max(80, secondDelay),
+        rewardMult: 1.5,
+        spawnDelay: secondDelay,
         isBoss: true,
         lane: secondLane,
       });
 
-      // lean escort for second boss too
       const secondEscort = progress > 0.5 ? "armored" : "fast";
       for (let i = 0; i < 2; i++) {
         enemies.push({
@@ -757,7 +770,7 @@ export class WaveAI {
           hpMult,
           speedMult,
           rewardMult,
-          spawnDelay: Math.max(80, secondDelay) + i * 10,
+          spawnDelay: secondDelay + i * 10,
           lane: secondLane,
         });
       }
@@ -772,15 +785,12 @@ export class WaveAI {
     };
   }
 
-  // ── Endless mode: boss schedule ─────────────────────────────────────────────
-  // Returns a boss type for waves that are multiples of 5 (starting wave 10),
-  // cycling through the bossSchedule defined in ENDLESS_CONFIG.
   _endlessBossForWave(waveNumber) {
     if (waveNumber < 10) return null;
     if (waveNumber % 5 !== 0) return null;
     const schedule = ENDLESS_CONFIG.bossSchedule;
     if (!schedule || schedule.length === 0) return null;
-    const idx = Math.floor(waveNumber / 5) - 2; // wave 10 → idx 0
+    const idx = Math.floor(waveNumber / 5) - 2;
     return schedule[idx % schedule.length] || null;
   }
 

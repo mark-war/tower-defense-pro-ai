@@ -1,4 +1,4 @@
-# Step 1: build stage
+# ===== Build stage =====
 FROM node:20-alpine AS build
 
 WORKDIR /app
@@ -11,16 +11,16 @@ COPY . .
 RUN npm run build
 
 
-# Step 2: production stage
+# ===== Production stage =====
 FROM nginx:alpine
 
-# Remove default nginx site
+# Remove default nginx website
 RUN rm -rf /usr/share/nginx/html/*
 
-# Copy build output
+# Copy built Vite app
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# SPA routing config
+# Nginx SPA config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

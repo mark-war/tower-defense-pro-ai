@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:docker": "vite build --mode docker",
+    "build:iis": "vite build --mode iis",
     "lint": "eslint .",
     "preview": "vite preview"
   },

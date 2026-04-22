@@ -13,23 +13,23 @@ export const CELL_SIZE = 36;
 export const TOWER_UPGRADES = {
   basic: {
     passives: [
-      { tier: 1, xp: 60, stat: "damage", mult: 0.12, label: "+12% dmg" },
-      { tier: 2, xp: 140, stat: "range", mult: 0.08, label: "+8% range" },
-      { tier: 3, xp: 250, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 1, xp: 30, stat: "damage", mult: 0.12, label: "+12% dmg" },
+      { tier: 2, xp: 70, stat: "range", mult: 0.08, label: "+8% range" },
+      { tier: 3, xp: 125, stat: "damage", mult: 0.18, label: "+18% dmg" },
       {
         tier: 4,
-        xp: 390,
+        xp: 200,
         stat: "fireRate",
         mult: -0.1,
         label: "−10% cooldown",
       },
       // tier 5 = skill5 gate (xp: 500)
-      { tier: 6, xp: 650, stat: "damage", mult: 0.22, label: "+22% dmg" },
-      { tier: 7, xp: 880, stat: "range", mult: 0.12, label: "+12% range" },
-      { tier: 8, xp: 1150, stat: "damage", mult: 0.28, label: "+28% dmg" },
+      { tier: 6, xp: 320, stat: "damage", mult: 0.22, label: "+22% dmg" },
+      { tier: 7, xp: 450, stat: "range", mult: 0.12, label: "+12% range" },
+      { tier: 8, xp: 600, stat: "damage", mult: 0.28, label: "+28% dmg" },
       {
         tier: 9,
-        xp: 1460,
+        xp: 780,
         stat: "fireRate",
         mult: -0.15,
         label: "−15% cooldown",
@@ -37,7 +37,7 @@ export const TOWER_UPGRADES = {
       // tier 10 = skill10 gate (xp: 1750)
     ],
     skill5: {
-      xp: 500,
+      xp: 260,
       A: {
         name: "Marksman",
         desc: "+50% dmg, +15% range",
@@ -54,7 +54,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 1750,
+      xp: 1000,
       A: {
         name: "Deadeye",
         desc: "+100% dmg, armor pierce",
@@ -112,23 +112,23 @@ export const TOWER_UPGRADES = {
 
   sniper: {
     passives: [
-      { tier: 1, xp: 50, stat: "damage", mult: 0.15, label: "+15% dmg" },
-      { tier: 2, xp: 120, stat: "range", mult: 0.12, label: "+12% range" },
-      { tier: 3, xp: 220, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      { tier: 1, xp: 25, stat: "damage", mult: 0.15, label: "+15% dmg" },
+      { tier: 2, xp: 60, stat: "range", mult: 0.12, label: "+12% range" },
+      { tier: 3, xp: 115, stat: "damage", mult: 0.2, label: "+20% dmg" },
       {
         tier: 4,
-        xp: 360,
+        xp: 190,
         stat: "fireRate",
         mult: -0.1,
         label: "−10% cooldown",
       },
       // tier 5 = skill5 gate (xp: 480)
-      { tier: 6, xp: 640, stat: "damage", mult: 0.28, label: "+28% dmg" },
-      { tier: 7, xp: 860, stat: "range", mult: 0.15, label: "+15% range" },
-      { tier: 8, xp: 1130, stat: "damage", mult: 0.35, label: "+35% dmg" },
+      { tier: 6, xp: 300, stat: "damage", mult: 0.28, label: "+28% dmg" },
+      { tier: 7, xp: 430, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 8, xp: 580, stat: "damage", mult: 0.35, label: "+35% dmg" },
       {
         tier: 9,
-        xp: 1440,
+        xp: 750,
         stat: "fireRate",
         mult: -0.12,
         label: "−12% cooldown",
@@ -136,7 +136,7 @@ export const TOWER_UPGRADES = {
       // tier 10 = skill10 gate (xp: 1700)
     ],
     skill5: {
-      xp: 480,
+      xp: 240,
       A: {
         name: "Longshot",
         desc: "+40% range, +30% dmg",
@@ -154,7 +154,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 1700,
+      xp: 900,
       A: {
         name: "Rail Gun",
         desc: "+150% dmg, pass-through",
@@ -211,23 +211,23 @@ export const TOWER_UPGRADES = {
 
   cannon: {
     passives: [
-      { tier: 1, xp: 90, stat: "damage", mult: 0.12, label: "+12% dmg" },
-      { tier: 2, xp: 210, stat: "splash", mult: 0.1, label: "+10% splash" },
-      { tier: 3, xp: 380, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 1, xp: 45, stat: "damage", mult: 0.12, label: "+12% dmg" },
+      { tier: 2, xp: 110, stat: "splash", mult: 0.1, label: "+10% splash" },
+      { tier: 3, xp: 200, stat: "damage", mult: 0.18, label: "+18% dmg" },
       {
         tier: 4,
-        xp: 600,
+        xp: 320,
         stat: "fireRate",
         mult: -0.1,
         label: "−10% cooldown",
       },
       // tier 5 = skill5 gate (xp: 780)
-      { tier: 6, xp: 1050, stat: "damage", mult: 0.22, label: "+22% dmg" },
-      { tier: 7, xp: 1400, stat: "splash", mult: 0.2, label: "+20% splash" },
-      { tier: 8, xp: 1820, stat: "damage", mult: 0.3, label: "+30% dmg" },
+      { tier: 6, xp: 480, stat: "damage", mult: 0.22, label: "+22% dmg" },
+      { tier: 7, xp: 660, stat: "splash", mult: 0.2, label: "+20% splash" },
+      { tier: 8, xp: 870, stat: "damage", mult: 0.3, label: "+30% dmg" },
       {
         tier: 9,
-        xp: 2320,
+        xp: 1100,
         stat: "fireRate",
         mult: -0.15,
         label: "−15% cooldown",
@@ -235,7 +235,7 @@ export const TOWER_UPGRADES = {
       // tier 10 = skill10 gate (xp: 2700)
     ],
     skill5: {
-      xp: 780,
+      xp: 400,
       A: {
         name: "Bombard",
         desc: "+60% splash radius",
@@ -252,7 +252,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 2700,
+      xp: 1350,
       A: {
         name: "Napalm",
         desc: "Splash leaves burning ground",
@@ -307,27 +307,25 @@ export const TOWER_UPGRADES = {
     },
   },
 
-  // LASER: fires every 5 frames = ~12 hits/sec. XP rates must be tiny.
-  // Threshold raised significantly so laser doesn't race to tier 9.
   laser: {
     passives: [
-      { tier: 1, xp: 300, stat: "damage", mult: 0.12, label: "+12% dmg" },
-      { tier: 2, xp: 700, stat: "range", mult: 0.1, label: "+10% range" },
-      { tier: 3, xp: 1250, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 1, xp: 150, stat: "damage", mult: 0.12, label: "+12% dmg" },
+      { tier: 2, xp: 350, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 3, xp: 620, stat: "damage", mult: 0.18, label: "+18% dmg" },
       {
         tier: 4,
-        xp: 2000,
+        xp: 980,
         stat: "fireRate",
         mult: -0.12,
         label: "−12% cooldown",
       },
       // tier 5 = skill5 gate (xp: 2600)
-      { tier: 6, xp: 3500, stat: "damage", mult: 0.25, label: "+25% dmg" },
-      { tier: 7, xp: 4700, stat: "range", mult: 0.15, label: "+15% range" },
-      { tier: 8, xp: 6200, stat: "damage", mult: 0.32, label: "+32% dmg" },
+      { tier: 6, xp: 1500, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 2100, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 8, xp: 2800, stat: "damage", mult: 0.32, label: "+32% dmg" },
       {
         tier: 9,
-        xp: 8000,
+        xp: 3600,
         stat: "fireRate",
         mult: -0.15,
         label: "−15% cooldown",
@@ -335,7 +333,7 @@ export const TOWER_UPGRADES = {
       // tier 10 = skill10 gate (xp: 9500)
     ],
     skill5: {
-      xp: 2600,
+      xp: 1200,
       A: {
         name: "Overclock",
         desc: "2× fire rate, +20% dmg",
@@ -352,7 +350,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 9500,
+      xp: 3200,
       A: {
         name: "Death Ray",
         desc: "Hits ALL enemies in range",
@@ -412,41 +410,41 @@ export const TOWER_UPGRADES = {
     passives: [
       {
         tier: 1,
-        xp: 80,
+        xp: 30,
         stat: "slowDuration",
         mult: 0.12,
         label: "+12% slow dur",
       },
-      { tier: 2, xp: 180, stat: "damage", mult: 0.1, label: "+10% dmg" },
+      { tier: 2, xp: 60, stat: "damage", mult: 0.1, label: "+10% dmg" },
       {
         tier: 3,
-        xp: 320,
+        xp: 120,
         stat: "slowDuration",
         mult: 0.18,
         label: "+18% slow dur",
       },
-      { tier: 4, xp: 510, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 4, xp: 240, stat: "range", mult: 0.1, label: "+10% range" },
       // tier 5 = skill5 gate (xp: 680)
       {
         tier: 6,
-        xp: 900,
+        xp: 390,
         stat: "slowDuration",
         mult: 0.22,
         label: "+22% slow dur",
       },
-      { tier: 7, xp: 1200, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      { tier: 7, xp: 540, stat: "damage", mult: 0.2, label: "+20% dmg" },
       {
         tier: 8,
-        xp: 1570,
+        xp: 710,
         stat: "slowDuration",
         mult: 0.28,
         label: "+28% slow dur",
       },
-      { tier: 9, xp: 2000, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 9, xp: 910, stat: "range", mult: 0.15, label: "+15% range" },
       // tier 10 = skill10 gate (xp: 2400)
     ],
     skill5: {
-      xp: 680,
+      xp: 300,
       A: {
         name: "Deep Freeze",
         desc: "+50% slow duration",
@@ -463,7 +461,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 2400,
+      xp: 1100,
       A: {
         name: "Absolute",
         desc: "Freeze fully stops enemy",
@@ -518,25 +516,25 @@ export const TOWER_UPGRADES = {
 
   tesla: {
     passives: [
-      { tier: 1, xp: 120, stat: "damage", mult: 0.15, label: "+15% dmg" },
-      { tier: 2, xp: 280, stat: "range", mult: 0.1, label: "+10% range" },
-      { tier: 3, xp: 500, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      { tier: 1, xp: 60, stat: "damage", mult: 0.15, label: "+15% dmg" },
+      { tier: 2, xp: 120, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 3, xp: 240, stat: "damage", mult: 0.2, label: "+20% dmg" },
       {
         tier: 4,
-        xp: 800,
+        xp: 400,
         stat: "fireRate",
         mult: -0.12,
         label: "−12% cooldown",
       },
       // tier 5 = skill5 gate (xp: 1050)
-      { tier: 6, xp: 1400, stat: "damage", mult: 0.25, label: "+25% dmg" },
-      { tier: 7, xp: 1870, stat: "chainTargets", flat: 1, label: "+1 chain" },
-      { tier: 8, xp: 2440, stat: "range", mult: 0.15, label: "+15% range" },
-      { tier: 9, xp: 3120, stat: "damage", mult: 0.3, label: "+30% dmg" },
+      { tier: 6, xp: 650, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 900, stat: "chainTargets", flat: 1, label: "+1 chain" },
+      { tier: 8, xp: 1180, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 9, xp: 1450, stat: "damage", mult: 0.3, label: "+30% dmg" },
       // tier 10 = skill10 gate (xp: 3700)
     ],
     skill5: {
-      xp: 1050,
+      xp: 520,
       A: {
         name: "Conductor",
         desc: "+2 chain targets",
@@ -553,7 +551,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 3700,
+      xp: 1800,
       A: {
         name: "Storm",
         desc: "Chains to 8 targets",
@@ -610,23 +608,23 @@ export const TOWER_UPGRADES = {
 
   inferno: {
     passives: [
-      { tier: 1, xp: 70, stat: "burnDamage", flat: 1, label: "+1 burn/tick" },
-      { tier: 2, xp: 160, stat: "range", mult: 0.1, label: "+10% range" },
-      { tier: 3, xp: 290, stat: "burnDamage", flat: 2, label: "+2 burn/tick" },
+      { tier: 1, xp: 40, stat: "burnDamage", flat: 1, label: "+1 burn/tick" },
+      { tier: 2, xp: 80, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 3, xp: 160, stat: "burnDamage", flat: 2, label: "+2 burn/tick" },
       {
         tier: 4,
-        xp: 460,
+        xp: 320,
         stat: "burnDuration",
         mult: 0.15,
         label: "+15% burn dur",
       },
       // tier 5 = skill5 gate (xp: 620)
-      { tier: 6, xp: 830, stat: "burnDamage", flat: 3, label: "+3 burn/tick" },
-      { tier: 7, xp: 1110, stat: "range", mult: 0.15, label: "+15% range" },
-      { tier: 8, xp: 1450, stat: "burnDamage", flat: 4, label: "+4 burn/tick" },
+      { tier: 6, xp: 450, stat: "burnDamage", flat: 3, label: "+3 burn/tick" },
+      { tier: 7, xp: 640, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 8, xp: 720, stat: "burnDamage", flat: 4, label: "+4 burn/tick" },
       {
         tier: 9,
-        xp: 1850,
+        xp: 900,
         stat: "burnDuration",
         mult: 0.25,
         label: "+25% burn dur",
@@ -634,7 +632,7 @@ export const TOWER_UPGRADES = {
       // tier 10 = skill10 gate (xp: 2300)
     ],
     skill5: {
-      xp: 620,
+      xp: 400,
       A: {
         name: "Wildfire",
         desc: "+60% burn duration",
@@ -652,7 +650,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 2300,
+      xp: 1100,
       A: {
         name: "Hellfire",
         desc: "Burn stacks 3×",
@@ -705,23 +703,20 @@ export const TOWER_UPGRADES = {
     },
   },
 
-  // VORTEX: splash hits many targets, each calling _damageEnemy.
-  // hitFlat reduced to 0.08 (was 0.4), thresholds raised significantly.
   vortex: {
     passives: [
-      { tier: 1, xp: 200, stat: "pullForce", flat: 0.1, label: "+0.1 pull" },
-      { tier: 2, xp: 470, stat: "splash", mult: 0.1, label: "+10% splash" },
-      { tier: 3, xp: 850, stat: "damage", mult: 0.18, label: "+18% dmg" },
-      { tier: 4, xp: 1350, stat: "pullForce", flat: 0.15, label: "+0.15 pull" },
-      // tier 5 = skill5 gate (xp: 1750)
-      { tier: 6, xp: 2350, stat: "damage", mult: 0.25, label: "+25% dmg" },
-      { tier: 7, xp: 3150, stat: "splash", mult: 0.2, label: "+20% splash" },
-      { tier: 8, xp: 4100, stat: "damage", mult: 0.32, label: "+32% dmg" },
-      { tier: 9, xp: 5200, stat: "pullForce", flat: 0.2, label: "+0.2 pull" },
+      { tier: 1, xp: 100, stat: "pullForce", flat: 0.1, label: "+0.1 pull" },
+      { tier: 2, xp: 240, stat: "splash", mult: 0.1, label: "+10% splash" },
+      { tier: 3, xp: 430, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 4, xp: 680, stat: "pullForce", flat: 0.15, label: "+0.15 pull" },
+      { tier: 6, xp: 1100, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 1330, stat: "splash", mult: 0.2, label: "+20% splash" },
+      { tier: 8, xp: 1820, stat: "damage", mult: 0.32, label: "+32% dmg" },
+      { tier: 9, xp: 2020, stat: "pullForce", flat: 0.2, label: "+0.2 pull" },
       // tier 10 = skill10 gate (xp: 6200)
     ],
     skill5: {
-      xp: 1750,
+      xp: 800,
       A: {
         name: "Singularity",
         desc: "+50% pull, +40% splash",
@@ -738,7 +733,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 6200,
+      xp: 2800,
       A: {
         name: "Void Rift",
         desc: "Teleports enemies back 20%",
@@ -1169,15 +1164,15 @@ export const MAPS = {
     },
     waypoints: [
       { col: 0, row: 10 },
-      { col: 5, row: 10 },
-      { col: 5, row: 4 },
-      { col: 12, row: 4 },
-      { col: 12, row: 15 },
-      { col: 20, row: 15 },
-      { col: 20, row: 7 },
-      { col: 27, row: 7 },
-      { col: 27, row: 13 },
-      { col: 30, row: 13 },
+      { col: 6, row: 10 },
+      { col: 6, row: 2 },
+      { col: 13, row: 2 },
+      { col: 13, row: 17 },
+      { col: 20, row: 17 },
+      { col: 20, row: 6 },
+      { col: 26, row: 6 },
+      { col: 26, row: 14 },
+      { col: 29, row: 14 },
     ],
   },
   spiral: {
@@ -1191,16 +1186,16 @@ export const MAPS = {
       accent: "#f97316",
     },
     waypoints: [
-      { col: 0, row: 3 },
-      { col: 26, row: 3 },
-      { col: 26, row: 17 },
-      { col: 4, row: 17 },
-      { col: 4, row: 7 },
-      { col: 20, row: 7 },
-      { col: 20, row: 13 },
-      { col: 8, row: 13 },
-      { col: 8, row: 10 },
-      { col: 30, row: 10 },
+      { col: 0, row: 1 },
+      { col: 28, row: 1 },
+      { col: 28, row: 8 },
+      { col: 14, row: 8 },
+      { col: 14, row: 3 },
+      { col: 8, row: 3 },
+      { col: 8, row: 18 },
+      { col: 22, row: 18 },
+      { col: 22, row: 13 },
+      { col: 29, row: 13 },
     ],
   },
   gauntlet: {
@@ -1214,14 +1209,16 @@ export const MAPS = {
       accent: "#818cf8",
     },
     waypoints: [
-      { col: 0, row: 10 },
-      { col: 8, row: 10 },
-      { col: 8, row: 5 },
-      { col: 15, row: 5 },
-      { col: 15, row: 15 },
-      { col: 22, row: 15 },
-      { col: 22, row: 10 },
-      { col: 30, row: 10 },
+      { col: 0, row: 5 },
+      { col: 10, row: 5 },
+      { col: 10, row: 17 },
+      { col: 3, row: 17 },
+      { col: 3, row: 11 },
+      { col: 18, row: 11 },
+      { col: 18, row: 2 },
+      { col: 25, row: 2 },
+      { col: 25, row: 16 },
+      { col: 29, row: 16 },
     ],
   },
   abyss: {
@@ -1235,12 +1232,16 @@ export const MAPS = {
       accent: "#e879f9",
     },
     waypoints: [
-      { col: 0, row: 2 },
-      { col: 28, row: 2 },
-      { col: 28, row: 10 },
-      { col: 2, row: 10 },
-      { col: 2, row: 18 },
-      { col: 30, row: 18 },
+      { col: 0, row: 18 },
+      { col: 27, row: 18 },
+      { col: 27, row: 12 },
+      { col: 5, row: 12 },
+      { col: 5, row: 6 },
+      { col: 23, row: 6 },
+      { col: 23, row: 1 },
+      { col: 12, row: 1 },
+      { col: 12, row: 9 },
+      { col: 29, row: 9 },
     ],
   },
 };
@@ -1251,6 +1252,7 @@ export const LEVELS = [
     id: 1,
     name: "Ember Valley",
     map: "valley",
+    xpMult: 1.4,
     waves: 8,
     startGold: 300,
     startLives: 20,
@@ -1263,6 +1265,7 @@ export const LEVELS = [
     id: 2,
     name: "Vortex Spiral",
     map: "spiral",
+    xpMult: 1.2,
     waves: 10,
     startGold: 280,
     startLives: 18,
@@ -1275,6 +1278,7 @@ export const LEVELS = [
     id: 3,
     name: "Iron Gauntlet",
     map: "gauntlet",
+    xpMult: 1.0,
     waves: 12,
     startGold: 260,
     startLives: 16,
@@ -1287,6 +1291,7 @@ export const LEVELS = [
     id: 4,
     name: "Void Abyss",
     map: "abyss",
+    xpMult: 0.85,
     waves: 14,
     startGold: 240,
     startLives: 14,
@@ -1312,6 +1317,7 @@ export const LEVELS = [
     id: 5,
     name: "Final Crucible",
     map: "abyss",
+    xpMult: 0.7,
     waves: 16,
     startGold: 220,
     startLives: 12,
@@ -1341,6 +1347,7 @@ export const LEVELS = [
 export const ENDLESS_CONFIG = {
   id: 99,
   name: "Endless Siege",
+  xpMult: 1.0,
   isEndless: true,
   startGold: 350,
   startLives: 25,

@@ -358,8 +358,12 @@ export class WaveAI {
   }
 
   _lateGamePressure(waveNumber, weaknesses) {
-    const primary = weaknesses[0];
-    const secondary = weaknesses[1];
+    const validAggressive = ["swarm", "fast", "armored", "stealth"];
+
+    const primary = weaknesses.find((w) => validAggressive.includes(w));
+    const secondary = weaknesses.filter(
+      (w) => validAggressive.includes(w) && w !== primary,
+    )[0];
 
     const aggressive = {
       swarm: [
@@ -629,7 +633,18 @@ export class WaveAI {
     const validComp = composition.filter(
       (c) => c.weight > 0 && ENEMY_TYPES[c.type],
     );
+
+    if (validComp.length === 0) {
+      validComp.push({ type: "basic", weight: 10 });
+      validComp.push({ type: "fast", weight: 3 });
+    }
+
     const totalWeight = validComp.reduce((s, c) => s + c.weight, 0);
+
+    if (totalWeight === 0) {
+      return { waveNumber, enemies: [], message, bossType, totalEnemies: 0 };
+    }
+
     const enemies = [];
     let globalDelay = 0;
     const delayFactor = Math.max(0.4, 1 - progress * 0.55);

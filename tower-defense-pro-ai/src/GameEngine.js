@@ -14,6 +14,8 @@ import {
   STEALTH_COUNTERS,
 } from "./gameConstants.js";
 import { WaveAI } from "./WaveAI.js";
+import { Kingdom } from "./Kingdom.js";
+import { SpawnCamp } from "./SpawnCamp.js";
 
 const VCFG = ADMIN_CONFIG.visual;
 const ECFG = ADMIN_CONFIG.economy;
@@ -36,6 +38,7 @@ export class GameEngine {
       : LEVELS.find((l) => l.id === levelId) || LEVELS[0];
     this.levelConfig = lvl;
     this.isEndless = isEndless;
+    this.xpMult = lvl.xpMult ?? 1.0;
     // Endless rotates maps
     const mapKey = isEndless ? "valley" : lvl.map || "valley";
     this.mapDef = MAPS[mapKey] || MAPS.valley;
@@ -96,6 +99,15 @@ export class GameEngine {
     this.animFrame = null;
     this.path = this._buildPath(this.mapDef.waypoints);
     this.pathCells = this._buildPathCells(this.mapDef.waypoints);
+
+    // Kingdom at path exit
+    const lastPt = this.path[this.path.length - 1];
+    this.kingdom = new Kingdom(lastPt.x, lastPt.y);
+
+    // Spawn camp at path entry
+    this.spawnCamps = [new SpawnCamp(this.path[0].x, this.path[0].y, 0)];
+    console.log(this.path[0].x, this.path[0].y);
+    console.log(lastPt.x, lastPt.y);
 
     this._streakCount = 0;
     this._streakTimer = 0;
@@ -517,6 +529,17 @@ export class GameEngine {
         this.mapDef = newMap;
         this.path = this._buildPath(newMap.waypoints);
         this.pathCells = this._buildPathCells(newMap.waypoints);
+
+        const lastPt = this.path[this.path.length - 1];
+        this.kingdom = new Kingdom(lastPt.x, lastPt.y);
+        this.spawnCamps = [new SpawnCamp(this.path[0].x, this.path[0].y, 0)];
+
+        this._addFloatingText(
+          this.canvas.width / 2,
+          this.canvas.height / 2 - 20,
+          `🗺 Map shifted: ${newMap.name}!`,
+          "#818cf8",
+        );
       }
     }
 
@@ -641,7 +664,7 @@ export class GameEngine {
           if (e.burnSourceId) {
             const burnTower = this.towers.find((t) => t.id === e.burnSourceId);
             if (burnTower) {
-              const burnXp = Math.sqrt(burnDmg) * 0.015 + 0.04;
+              const burnXp = Math.sqrt(burnDmg) * 0.015 * this.xpMult;
               burnTower.xp += burnXp;
               burnTower.totalDamage += burnDmg;
               this._checkTowerProgression(burnTower, this.wave);
@@ -959,6 +982,13 @@ export class GameEngine {
                 }
               }
             }
+            if (p.towerType === "vortex") {
+              const vt = this.towers.find((t) => t.id === p.towerId);
+              if (vt) {
+                vt.xp += 0.15 * this.xpMult;
+                this._checkTowerProgression(vt, this.wave);
+              }
+            }
             this._addParticles(p.x, p.y, p.color, 14);
           } else {
             this._damageEnemy(e, p.damage, p);
@@ -986,14 +1016,25 @@ export class GameEngine {
 
   _damageEnemy(enemy, rawDmg, proj) {
     let dmg = rawDmg;
+    const effectiveXpMult = this.isEndless
+      ? this.xpMult * Math.max(0.5, 1 - (this.wave - 1) * 0.005)
+      : this.xpMult;
     if (!proj?.armorPiercing) dmg *= 1 - enemy.armor;
     // Armor melt special
     if (proj?.specials?.includes("armorMelt") && enemy.burnTimer > 0)
       enemy.armor = Math.max(0, enemy.armor - 0.4);
     enemy.hp -= dmg;
     if (enemy.isBoss && dmg > 50) this._triggerShake(4, 5);
-    if (proj?.slowDuration && !enemy.immunities.includes(proj.towerType))
+    if (proj?.slowDuration && !enemy.immunities.includes(proj.towerType)) {
       enemy.slowTimer = proj.slowDuration;
+      if (proj.towerType === "freeze") {
+        const freezeTower = this.towers.find((t) => t.id === proj.towerId);
+        if (freezeTower) {
+          freezeTower.xp += 0.3 * effectiveXpMult;
+          this._checkTowerProgression(freezeTower, this.wave);
+        }
+      }
+    }
     if (proj?.specials?.includes("stunOnHit")) {
       if (enemy.stunCooldown <= 0) {
         if (!enemy.isBoss) {
@@ -1021,22 +1062,14 @@ export class GameEngine {
         tower.totalDamage += dmg;
 
         const XP_RATES = {
-          // basic: balanced mid-range XP
-          basic: { mult: 0.08, bossFlat: 1.2, hitFlat: 0.08 },
-          // sniper: slow fire, high damage — keep moderate
-          sniper: { mult: 0.06, bossFlat: 1.8, hitFlat: 0.06 },
-          // cannon: splash hits many — reduce mult to avoid multi-hit stacking
-          cannon: { mult: 0.04, bossFlat: 1.2, hitFlat: 0.06 },
-          // laser: fires every 5 frames (~12/sec) — must be very tiny per hit
-          laser: { mult: 0.005, bossFlat: 0.3, hitFlat: 0.008 },
-          // freeze: support, earns through assists not direct hits
-          freeze: { mult: 0.0, bossFlat: 0.4, hitFlat: 0.12 },
-          // tesla: chains 3-5 targets, each calling _damageEnemy — reduce
-          tesla: { mult: 0.02, bossFlat: 0.8, hitFlat: 0.04 },
-          // inferno: low hit dmg, needs flat boost
-          inferno: { mult: 0.04, bossFlat: 0.8, hitFlat: 0.12 },
-          // vortex: splash hits many targets per shot — CRITICAL reduction
-          vortex: { mult: 0.0, bossFlat: 0.5, hitFlat: 0.06 },
+          basic: { mult: 0.1, bossFlat: 1.5, hitFlat: 0.12 }, // was 0.08/1.2/0.08
+          sniper: { mult: 0.08, bossFlat: 2.0, hitFlat: 0.1 }, // was 0.06/1.8/0.06
+          cannon: { mult: 0.06, bossFlat: 1.5, hitFlat: 0.1 }, // was 0.04/1.2/0.06
+          laser: { mult: 0.015, bossFlat: 0.8, hitFlat: 0.025 }, // was 0.012/0.6/0.018
+          freeze: { mult: 0.02, bossFlat: 1.0, hitFlat: 0.35 }, // unchanged
+          tesla: { mult: 0.03, bossFlat: 1.0, hitFlat: 0.06 }, // was 0.02/0.8/0.04
+          inferno: { mult: 0.05, bossFlat: 1.0, hitFlat: 0.08 }, // was 0.04/0.8/0.06
+          vortex: { mult: 0.0, bossFlat: 0.6, hitFlat: 0.0 }, // hitFlat zeroed, earns via per-shot bonus only
         };
 
         const rate = XP_RATES[tower.type] || {
@@ -1047,7 +1080,7 @@ export class GameEngine {
         const xpGain =
           Math.sqrt(dmg) * rate.mult +
           rate.hitFlat +
-          (enemy.isBoss ? rate.bossFlat : 0);
+          (enemy.isBoss ? rate.bossFlat : 0) * effectiveXpMult;
 
         tower.xp += xpGain;
       }
@@ -1151,12 +1184,12 @@ export class GameEngine {
         const assistXp =
           assistDef?.category === "support"
             ? enemy.isBoss
-              ? 12
-              : 2.5
+              ? 15
+              : 4.0 // support assists should be rewarded well, especially on bosses
             : enemy.isBoss
               ? 6
-              : 1.0;
-        assistTower.xp += assistXp;
+              : 1.0; // non-support assists get a small bonus, more on bosses
+        assistTower.xp += assistXp * this.xpMult;
         this._checkTowerProgression(assistTower, this.wave);
       }
     }
@@ -1174,7 +1207,7 @@ export class GameEngine {
           : enemy.isBoss
             ? 8
             : 1.0;
-      tower.xp += killerXp;
+      tower.xp += killerXp * this.xpMult;
       this._checkTowerProgression(tower, this.wave);
     }
 
@@ -1388,6 +1421,13 @@ export class GameEngine {
       ctx.restore();
     }
     ctx.restore();
+
+    // ── Spawn camps + Kingdom ─────────────────────────────────────────────
+    for (const camp of this.spawnCamps) camp.draw(ctx, this.tick);
+    if (this.kingdom) {
+      const hpFrac = Math.max(0, this.lives / this.levelConfig.startLives);
+      this.kingdom.draw(ctx, hpFrac, this.tick);
+    }
 
     // ── Last-stand pulsing border ─────────────────────────────────────────────
     if (this.lastStandActive) {

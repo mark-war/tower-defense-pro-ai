@@ -43,6 +43,9 @@ export class GameEngine {
     const mapKey = isEndless ? "valley" : lvl.map || "valley";
     this.mapDef = MAPS[mapKey] || MAPS.valley;
 
+    this.fortifyLevel = 0;
+    this.fortifyCost = ECFG.fortifyCostBase;
+
     this.grid = Array.from({ length: GRID_ROWS }, () =>
       Array(GRID_COLS).fill(null),
     );
@@ -112,6 +115,8 @@ export class GameEngine {
     this._streakCount = 0;
     this._streakTimer = 0;
     this._streakWindow = 0;
+
+    this.paused = false;
   }
 
   _setupCanvas() {
@@ -297,106 +302,148 @@ export class GameEngine {
   upgradeTower(col, row, skillType, path) {
     const tower = this.grid[row]?.[col];
     if (!tower) return false;
+
     const upgDef = TOWER_UPGRADES[tower.type];
     if (!upgDef) return false;
 
-    let costDef;
-    if (skillType === "skill5") costDef = upgDef.skill5[path];
-    if (skillType === "skill10") costDef = upgDef.skill10[path];
-    if (skillType === "legendary50") costDef = upgDef.legendary50?.[path];
-    if (skillType === "legendary100") costDef = upgDef.legendary100?.[path];
-    if (!costDef) return false;
+    // ✅ universal resolver (works for skill5, skill10, legendary50, legendary100)
+    const costDef = upgDef[skillType]?.[path];
+    if (!costDef) {
+      console.warn("Missing upgrade:", tower.type, skillType, path);
+      return false;
+    }
 
-    // Guard: can't buy if wrong prereqs
+    // ✅ base cost
+    let effectiveCost = costDef.cost;
+
+    // ✅ scaling only for legendary
+    const scaleMap = {
+      legendary50: 0.04,
+      legendary100: 0.06,
+    };
+
+    if (scaleMap[skillType]) {
+      effectiveCost = Math.floor(
+        costDef.cost * (1 + this.wave * scaleMap[skillType]) + this.gold * 0.1,
+      );
+    }
+
+    // ✅ prerequisite guards
     if (skillType === "skill5" && (tower.passiveTier < 4 || tower.skill5chosen))
       return false;
+
     if (
       skillType === "skill10" &&
       (!tower.skill5chosen || tower.passiveTier < 9 || tower.skill10chosen)
     )
       return false;
+
     if (
       skillType === "legendary50" &&
       (!tower.skill10chosen || tower.legendaryUnlocked)
     )
       return false;
+
     if (
       skillType === "legendary100" &&
       (!tower.legendaryUnlocked || tower.legendary100Unlocked)
     )
       return false;
 
-    if (this.gold < costDef.cost) {
+    // ✅ gold check
+    if (this.gold < effectiveCost) {
       this._addFloatingText(
         tower.x,
         tower.y - 20,
-        `Need ${costDef.cost}g`,
+        `Need ${effectiveCost}g`,
         "#ef4444",
       );
       return false;
     }
 
-    this.gold -= costDef.cost;
+    this.gold -= effectiveCost;
 
-    // Apply stat deltas
+    // ✅ apply stat deltas
     const d = costDef.statDelta || {};
+
     if (d.damage !== undefined) tower.damage *= 1 + d.damage;
     if (d.range !== undefined) tower.range *= 1 + d.range;
-    if (d.fireRate !== undefined)
+
+    if (d.fireRate !== undefined) {
       tower.fireRate = Math.max(
         1,
         Math.round(tower.fireRate * (1 + d.fireRate)),
       );
+    }
+
     if (d.splash !== undefined) tower.splash *= 1 + d.splash;
     if (d.pullForce !== undefined) tower.pullForce += d.pullForce;
-    if (d.slowDuration !== undefined)
+
+    if (d.slowDuration !== undefined) {
       tower.slowDuration = Math.round(
         tower.slowDuration * (1 + d.slowDuration),
       );
+    }
+
     if (d.chainTargets !== undefined) tower.chainTargets += d.chainTargets;
     if (d.burnDamage !== undefined) tower.burnDamage += d.burnDamage;
-    if (d.burnDuration !== undefined)
+
+    if (d.burnDuration !== undefined) {
       tower.burnDuration = Math.round(
         tower.burnDuration * (1 + d.burnDuration),
       );
-    if (d.projectileSpeed !== undefined)
-      tower.projectileSpeed *= 1 + d.projectileSpeed;
-
-    if (costDef.special) {
-      tower.specials.push(costDef.special);
-      if (costDef.special === "armorPiercing") tower.armorPiercing = true;
     }
 
-    // Mark as chosen
+    if (d.projectileSpeed !== undefined) {
+      tower.projectileSpeed *= 1 + d.projectileSpeed;
+    }
+
+    // ✅ specials
+    if (costDef.special) {
+      tower.specials.push(costDef.special);
+
+      if (costDef.special === "armorPiercing") {
+        tower.armorPiercing = true;
+      }
+    }
+
+    // ✅ mark progression
     if (skillType === "skill5") {
       tower.skill5chosen = path;
       tower.tier = 1;
       tower.chosenPath = path;
     }
+
     if (skillType === "skill10") {
       tower.skill10chosen = path;
       tower.tier = 2;
       tower.tier2Path = path;
     }
+
     if (skillType === "legendary50") {
       tower.legendaryUnlocked = true;
       tower.legendary50Path = path;
     }
+
     if (skillType === "legendary100") {
       tower.legendary100Unlocked = true;
       tower.legendary100Path = path;
     }
 
+    // ✅ reset upgrade flags
     tower.upgradeReady = false;
     tower.upgradeReadyType = null;
 
+    // ✅ effects
     this._addParticles(tower.x, tower.y, "#facc15", 20);
+
     this._addFloatingText(
       tower.x,
       tower.y - 20,
       `✦ ${costDef.name}!`,
       "#fbbf24",
     );
+
     this._emitState();
     return true;
   }
@@ -982,11 +1029,10 @@ export class GameEngine {
                 }
               }
             }
-            if (p.towerType === "vortex") {
+            if (p.towerType === "vortex" && p.pullForce > 0) {
               const vt = this.towers.find((t) => t.id === p.towerId);
               if (vt) {
-                vt.xp += 0.15 * this.xpMult;
-                this._checkTowerProgression(vt, this.wave);
+                vt._wavePulls = (vt._wavePulls || 0) + 1;
               }
             }
             this._addParticles(p.x, p.y, p.color, 14);
@@ -1024,12 +1070,17 @@ export class GameEngine {
     if (proj?.specials?.includes("armorMelt") && enemy.burnTimer > 0)
       enemy.armor = Math.max(0, enemy.armor - 0.4);
     enemy.hp -= dmg;
+    if (enemy.isBoss && proj?.towerId) {
+      const t = this.towers.find((t) => t.id === proj.towerId);
+      if (t) t._hitBoss = true;
+    }
     if (enemy.isBoss && dmg > 50) this._triggerShake(4, 5);
     if (proj?.slowDuration && !enemy.immunities.includes(proj.towerType)) {
       enemy.slowTimer = proj.slowDuration;
       if (proj.towerType === "freeze") {
         const freezeTower = this.towers.find((t) => t.id === proj.towerId);
         if (freezeTower) {
+          freezeTower._waveSlowHits = (freezeTower._waveSlowHits || 0) + 1;
           freezeTower.xp += 0.3 * effectiveXpMult;
           this._checkTowerProgression(freezeTower, this.wave);
         }
@@ -1061,28 +1112,8 @@ export class GameEngine {
       if (tower) {
         tower.totalDamage += dmg;
 
-        const XP_RATES = {
-          basic: { mult: 0.1, bossFlat: 1.5, hitFlat: 0.12 }, // was 0.08/1.2/0.08
-          sniper: { mult: 0.08, bossFlat: 2.0, hitFlat: 0.1 }, // was 0.06/1.8/0.06
-          cannon: { mult: 0.06, bossFlat: 1.5, hitFlat: 0.1 }, // was 0.04/1.2/0.06
-          laser: { mult: 0.015, bossFlat: 0.8, hitFlat: 0.025 }, // was 0.012/0.6/0.018
-          freeze: { mult: 0.02, bossFlat: 1.0, hitFlat: 0.35 }, // unchanged
-          tesla: { mult: 0.03, bossFlat: 1.0, hitFlat: 0.06 }, // was 0.02/0.8/0.04
-          inferno: { mult: 0.05, bossFlat: 1.0, hitFlat: 0.08 }, // was 0.04/0.8/0.06
-          vortex: { mult: 0.0, bossFlat: 0.6, hitFlat: 0.0 }, // hitFlat zeroed, earns via per-shot bonus only
-        };
-
-        const rate = XP_RATES[tower.type] || {
-          mult: 0.06,
-          bossFlat: 1.0,
-          hitFlat: 0.08,
-        };
-        const xpGain =
-          Math.sqrt(dmg) * rate.mult +
-          rate.hitFlat +
-          (enemy.isBoss ? rate.bossFlat : 0) * effectiveXpMult;
-
-        tower.xp += xpGain;
+        tower._waveHits = tower._waveHits || new Set();
+        tower._waveHits.add(enemy.id);
       }
     }
     if (enemy.hp <= 0) this._killEnemy(enemy, proj?.towerType, proj?.towerId);
@@ -1160,6 +1191,10 @@ export class GameEngine {
     const idx = this.enemies.indexOf(enemy);
     if (idx === -1) return;
 
+    const effectiveXpMult = this.isEndless
+      ? this.xpMult * Math.max(0.5, 1 - (this.wave - 1) * 0.005)
+      : this.xpMult;
+
     // streak
     this._streakWindow = 180;
     this._streakCount++;
@@ -1180,16 +1215,8 @@ export class GameEngine {
         if (assistId === towerId) continue;
         const assistTower = this.towers.find((t) => t.id === assistId);
         if (!assistTower) continue;
-        const assistDef = TOWER_TYPES[assistTower.type];
-        const assistXp =
-          assistDef?.category === "support"
-            ? enemy.isBoss
-              ? 15
-              : 4.0 // support assists should be rewarded well, especially on bosses
-            : enemy.isBoss
-              ? 6
-              : 1.0; // non-support assists get a small bonus, more on bosses
-        assistTower.xp += assistXp * this.xpMult;
+        const assistXp = _calcAssistXp(assistTower, enemy);
+        assistTower.xp += assistXp * effectiveXpMult;
         this._checkTowerProgression(assistTower, this.wave);
       }
     }
@@ -1198,16 +1225,9 @@ export class GameEngine {
     const tower = this.towers.find((t) => t.id === towerId);
     if (tower) {
       tower.kills++;
-      const killerDef = TOWER_TYPES[tower.type];
-      const killerXp =
-        killerDef?.category === "support"
-          ? enemy.isBoss
-            ? 10
-            : 2.0 // support rarely gets the kill, reward it well
-          : enemy.isBoss
-            ? 8
-            : 1.0;
-      tower.xp += killerXp * this.xpMult;
+      // Role-based kill XP
+      const killXp = _calcKillXp(tower, enemy);
+      tower.xp += killXp * effectiveXpMult;
       this._checkTowerProgression(tower, this.wave);
     }
 
@@ -1318,6 +1338,11 @@ export class GameEngine {
     this._checkLastStand();
     if (this.state !== "wave") return;
     if (this.spawnQueue.length > 0 || this.enemies.length > 0) return;
+
+    // Wave-end XP pass — role-based, wave-normalized
+    const waveXpBudget = 80 + this.wave * 4; // total XP pool grows with wave
+    this._grantWaveEndXp(waveXpBudget);
+
     this.state = "idle";
     this.waveAI.recordWaveResults({
       enemiesKilled: this.waveKills,
@@ -1326,7 +1351,7 @@ export class GameEngine {
       goldSpent: this.waveGoldSpent,
       wave: this.wave,
     });
-    const bonus = ECFG.waveClearBonus + this.wave * ECFG.waveClearBonusPerWave;
+    const bonus = ECFG.waveClearBonus + Math.sqrt(this.wave) * 15;
     this.gold += bonus;
     this._addFloatingText(
       this.canvas.width / 2,
@@ -1343,6 +1368,84 @@ export class GameEngine {
       this.waveAI.finalizeGame(true);
     }
     this._emitState();
+  }
+
+  _grantWaveEndXp(budget) {
+    const effectiveXpMult = this.isEndless
+      ? this.xpMult * Math.max(0.5, 1 - (this.wave - 1) * 0.005)
+      : this.xpMult;
+
+    for (const tower of this.towers) {
+      let xp = 0;
+      const role = TOWER_TYPES[tower.type]?.category;
+
+      if (role === "attack") {
+        // Kills * flat rate, capped at budget/towerCount
+        const killShare = Math.min(tower.kills, 40);
+        xp = killShare * 1.2;
+      } else if (role === "support") {
+        if (tower.type === "freeze") {
+          // XP for unique enemies slowed this wave
+          const slowHits = Math.min(tower._waveSlowHits || 0, 60);
+          xp = slowHits * 0.8;
+        } else if (tower.type === "vortex") {
+          // XP for pulls executed this wave
+          const pulls = Math.min(tower._wavePulls || 0, 80);
+          xp = pulls * 0.5;
+        }
+      } else if (role === "tech") {
+        if (tower.type === "laser") {
+          // XP for unique enemies hit (coverage, not overkill)
+          const uniqueHits = Math.min(tower._waveHits?.size || 0, 50);
+          xp = uniqueHits * 1.0;
+        } else if (tower.type === "tesla") {
+          // XP for unique enemies chained to
+          const uniqueHits = Math.min(tower._waveHits?.size || 0, 40);
+          xp = uniqueHits * 1.1;
+        }
+      }
+
+      // Boss participation bonus — flat, not damage-scaled
+      if (tower._hitBoss) xp += 18;
+
+      // Normalize against budget so no single tower hogs XP
+      const maxPerTower = budget / Math.max(1, this.towers.length * 0.6);
+      xp = Math.min(xp, maxPerTower);
+
+      tower.xp += xp * effectiveXpMult;
+      this._checkTowerProgression(tower, this.wave);
+
+      // Reset wave trackers
+      tower._waveHits = new Set();
+      tower._waveSlowHits = 0;
+      tower._wavePulls = 0;
+      tower._hitBoss = false;
+    }
+  }
+
+  fortify() {
+    if (this.state !== "idle") return false;
+    const cost = this.fortifyCost;
+    if (this.gold < cost) return false;
+    if (this.fortifyLevel >= ECFG.maxFortifyLevel) return false;
+
+    this.gold -= cost;
+    this.fortifyLevel++;
+    this.fortifyCost += ECFG.fortifyCostPerPurchase;
+
+    // Each fortify gives all towers a small permanent dmg boost
+    for (const tower of this.towers) {
+      tower.damage *= 1.08;
+    }
+
+    this._addFloatingText(
+      this.canvas.width / 2,
+      this.canvas.height / 2 - 30,
+      `🏰 Fortify Lv${this.fortifyLevel}! All towers +8% dmg`,
+      "#fbbf24",
+    );
+    this._emitState();
+    return true;
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -1844,6 +1947,23 @@ export class GameEngine {
       );
     }
 
+    // ── PAUSE OVERLAY ─────────────────────────────────────────────────────────────
+    if (this.paused) {
+      ctx.fillStyle = "rgba(0,0,0,0.68)";
+      ctx.fillRect(0, 0, W, H);
+      const pulse = 0.8 + 0.2 * Math.sin(this.tick * 0.07);
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = "#e2e8f0";
+      ctx.font = "bold 40px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("⏸ PAUSED", W / 2, H / 2 - 18);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#475569";
+      ctx.font = "13px monospace";
+      ctx.fillText("Space / P  to resume", W / 2, H / 2 + 22);
+    }
+
     ctx.restore(); // pop shake transform
   }
 
@@ -1854,20 +1974,96 @@ export class GameEngine {
     }
   }
 
+  togglePause() {
+    if (this.state !== "wave") return false;
+    this.paused = !this.paused;
+    this._emitState();
+    return this.paused;
+  }
+
+  getSaveState() {
+    return {
+      version: 1,
+      timestamp: new Date().toISOString(),
+      levelId: this.levelId,
+      wave: this.wave,
+      gold: this.gold,
+      lives: this.lives,
+      score: this.score,
+      fortifyLevel: this.fortifyLevel,
+      fortifyCost: this.fortifyCost,
+      selectedTowerType: this.selectedTowerType,
+      towerCatCounts: { ...this.towerCatCounts },
+      towers: this.towers.map((t) => {
+        const s = { ...t };
+        // Convert Sets → arrays so JSON.stringify works
+        s._waveHits = [];
+        s.assistTowers = [];
+        return s;
+      }),
+      playerProfile: {
+        ...this.waveAI.playerProfile,
+        towerPositions: [...this.waveAI.playerProfile.towerPositions],
+        weaknesses: [...this.waveAI.playerProfile.weaknesses],
+      },
+      adaptationLog: [...this.waveAI.adaptationLog],
+    };
+  }
+
+  loadSaveState(save) {
+    if (!save || save.version !== 1) return false;
+    this._applyLevel(save.levelId);
+
+    this.wave = save.wave;
+    this.gold = save.gold;
+    this.lives = save.lives;
+    this.score = save.score;
+    this.fortifyLevel = save.fortifyLevel || 0;
+    this.fortifyCost = save.fortifyCost || ECFG.fortifyCostBase;
+    this.selectedTowerType =
+      save.selectedTowerType || this.levelConfig.unlockedTowers[0];
+    this.towerCatCounts = { ...save.towerCatCounts };
+
+    for (const st of save.towers) {
+      const tower = { ...st };
+      tower._waveHits = new Set();
+      tower.assistTowers = new Set();
+      this.towers.push(tower);
+      this.grid[tower.row][tower.col] = tower;
+    }
+
+    if (save.playerProfile) {
+      this.waveAI.playerProfile = {
+        ...save.playerProfile,
+        towerPositions: save.playerProfile.towerPositions || [],
+        weaknesses: save.playerProfile.weaknesses || [],
+      };
+      this.waveAI.currentWave = save.wave;
+      this.waveAI.adaptationLog = save.adaptationLog || [];
+    }
+
+    this._checkSynergies();
+    this.state = "idle";
+    this._emitState();
+    return true;
+  }
+
   _loop() {
     this.tick++;
-    if (this.state === "wave") {
+    if (this.state === "wave" && !this.paused) {
       this._updateSpawning();
       this._updateEnemies();
       this._updateTowers();
       this._updateProjectiles();
       this._checkWaveComplete();
     }
-    this._updateParticles();
-    if (this._streakWindow > 0) {
-      this._streakWindow--;
-    } else {
-      this._streakCount = 0;
+    if (!this.paused) {
+      this._updateParticles();
+      if (this._streakWindow > 0) {
+        this._streakWindow--;
+      } else {
+        this._streakCount = 0;
+      }
     }
     this._draw();
     if (this.tick % 30 === 0) this._emitState();
@@ -1883,6 +2079,7 @@ export class GameEngine {
       totalWaves: this.isEndless ? "∞" : lvl.waves,
       score: this.score,
       state: this.state,
+      paused: this.paused,
       levelId: this.levelId,
       levelName: lvl.name,
       mapName: this.mapDef.name,
@@ -2741,4 +2938,62 @@ function _drawProjectile(ctx, p, tick) {
 
   ctx.shadowBlur = 0;
   ctx.globalAlpha = 1;
+}
+
+function _calcKillXp(tower, enemy) {
+  // Flat kill values by role — no damage scaling
+  if (enemy.isBoss) {
+    // Boss kills: meaningful but not game-breaking
+    const bossXp = {
+      basic: 12,
+      sniper: 14,
+      cannon: 11,
+      laser: 8,
+      freeze: 6,
+      tesla: 10,
+      inferno: 11,
+      vortex: 5,
+    };
+    return bossXp[tower.type] ?? 10;
+  }
+  // Normal kills: small flat amount, role-adjusted
+  const normalXp = {
+    basic: 1.2,
+    sniper: 2.0,
+    cannon: 0.8,
+    laser: 0.6,
+    freeze: 0.4,
+    tesla: 1.0,
+    inferno: 0.9,
+    vortex: 0.3,
+  };
+  return normalXp[tower.type] ?? 1.0;
+}
+
+function _calcAssistXp(tower, enemy) {
+  // Assists are worth less than kills, role-adjusted
+  if (enemy.isBoss) {
+    const bossAssist = {
+      basic: 5,
+      sniper: 5,
+      cannon: 4,
+      laser: 4,
+      freeze: 6,
+      tesla: 5,
+      inferno: 4,
+      vortex: 3,
+    };
+    return bossAssist[tower.type] ?? 4;
+  }
+  const normalAssist = {
+    basic: 0.4,
+    sniper: 0.6,
+    cannon: 0.3,
+    laser: 0.3,
+    freeze: 0.5,
+    tesla: 0.4,
+    inferno: 0.3,
+    vortex: 0.2,
+  };
+  return normalAssist[tower.type] ?? 0.3;
 }

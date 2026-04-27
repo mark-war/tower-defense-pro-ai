@@ -20,6 +20,8 @@ export function HUD({
   selectedTower,
   activeTab,
   sellMode,
+  hasSave,
+  highScores = [],
   onSelectTower,
   onSellMode,
   onStartWave,
@@ -30,6 +32,12 @@ export function HUD({
   onTriggerAbility,
   onTowerCellClick,
   onClearEnemyInspect,
+  onFortify,
+  onPause,
+  onSave,
+  onLoad,
+  onDeleteSave,
+  onClearScores,
 }) {
   const [confirmLevel, setConfirmLevel] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -77,6 +85,9 @@ export function HUD({
     lastStandActive,
     towers = [],
     inspectedEnemy,
+    fortifyLevel = 0,
+    fortifyCost = 150,
+    maxFortifyLevel = 20,
   } = gameState;
 
   const gm = getGlobalMemory();
@@ -324,6 +335,78 @@ export function HUD({
               </button>
             );
           })}
+        </div>
+
+        {/* Pause + Save/Load bar */}
+        <div style={{ display: "flex", gap: 5, marginTop: 5 }}>
+          <button
+            onClick={onPause}
+            disabled={state !== "wave"}
+            style={{
+              flex: 1,
+              padding: "5px 4px",
+              border: `1px solid ${state === "wave" ? (gameState?.paused ? "#4ade80" : "#fbbf24") : "#334155"}`,
+              borderRadius: 4,
+              background:
+                state === "wave"
+                  ? gameState?.paused
+                    ? "#0f2a0f"
+                    : "#1a1a0a"
+                  : "#111827",
+              color:
+                state === "wave"
+                  ? gameState?.paused
+                    ? "#4ade80"
+                    : "#fbbf24"
+                  : "#374151",
+              fontFamily: mono,
+              fontSize: 10,
+              cursor: state === "wave" ? "pointer" : "not-allowed",
+            }}
+          >
+            {gameState?.paused ? "▶ RESUME" : "⏸ PAUSE"}
+            <div style={{ fontSize: 8, color: "#475569" }}>Space / P</div>
+          </button>
+          <button
+            onClick={onSave}
+            disabled={state !== "idle"}
+            title="Save between waves (Ctrl+S)"
+            style={{
+              flex: 1,
+              padding: "5px 4px",
+              border: `1px solid ${state === "idle" ? "#38bdf8" : "#334155"}`,
+              borderRadius: 4,
+              background: state === "idle" ? "#0a1a2a" : "#111827",
+              color: state === "idle" ? "#38bdf8" : "#374151",
+              fontFamily: mono,
+              fontSize: 10,
+              cursor: state === "idle" ? "pointer" : "not-allowed",
+            }}
+          >
+            💾 SAVE
+            <div style={{ fontSize: 8, color: "#475569" }}>Ctrl+S</div>
+          </button>
+          <button
+            onClick={onLoad}
+            disabled={!hasSave}
+            title="Load most recent save"
+            style={{
+              flex: 1,
+              padding: "5px 4px",
+              border: `1px solid ${hasSave ? "#a78bfa" : "#334155"}`,
+              borderRadius: 4,
+              background: hasSave ? "#1a0a2e" : "#111827",
+              color: hasSave ? "#a78bfa" : "#374151",
+              fontFamily: mono,
+              fontSize: 10,
+              cursor: hasSave ? "pointer" : "not-allowed",
+            }}
+          >
+            📂 LOAD
+            <div style={{ fontSize: 8, color: "#475569" }}>
+              {hasSave ? "save exists" : "no save"}
+            </div>
+          </button>
         </div>
       </div>
 
@@ -745,25 +828,109 @@ export function HUD({
           {/* Wave control */}
           <div style={{ padding: "9px 11px", marginTop: "auto" }}>
             {state === "idle" && (
-              <button
-                onClick={onStartWave}
-                style={{
-                  width: "100%",
-                  padding: "10px",
-                  background: "#0f2a0f",
-                  border: "1px solid #4ade80",
-                  borderRadius: 5,
-                  color: "#4ade80",
-                  fontFamily: mono,
-                  fontSize: 12,
-                  fontWeight: "bold",
-                  cursor: "pointer",
-                  letterSpacing: "0.04em",
-                }}
-              >
-                ▶ SEND WAVE {wave + 1}
-                {bossWaves[wave + 1] ? " 💀 BOSS" : ""}
-              </button>
+              <>
+                {/* Fortify button */}
+                <button
+                  onClick={onFortify}
+                  disabled={
+                    gold < fortifyCost || fortifyLevel >= maxFortifyLevel
+                  }
+                  title={`Permanently boost all towers +8% damage. Cost increases each purchase.`}
+                  style={{
+                    width: "100%",
+                    padding: "7px 10px",
+                    marginBottom: 6,
+                    background:
+                      fortifyLevel >= maxFortifyLevel
+                        ? "#111827"
+                        : gold >= fortifyCost
+                          ? "#1a140a"
+                          : "#0d0d0d",
+                    border: `1px solid ${
+                      fortifyLevel >= maxFortifyLevel
+                        ? "#374151"
+                        : gold >= fortifyCost
+                          ? "#fbbf24"
+                          : "#374151"
+                    }`,
+                    borderRadius: 5,
+                    color:
+                      fortifyLevel >= maxFortifyLevel
+                        ? "#374151"
+                        : gold >= fortifyCost
+                          ? "#fbbf24"
+                          : "#4b5563",
+                    fontFamily: mono,
+                    fontSize: 10,
+                    cursor:
+                      gold >= fortifyCost && fortifyLevel < maxFortifyLevel
+                        ? "pointer"
+                        : "not-allowed",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <span>
+                    🏰 Fortify{" "}
+                    <span style={{ fontSize: 8, color: "#6b7280" }}>
+                      Lv {fortifyLevel}/{maxFortifyLevel}
+                    </span>
+                  </span>
+                  <span
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <span style={{ fontSize: 9, color: "#94a3b8" }}>
+                      all towers +8% dmg
+                    </span>
+                    <span style={{ fontWeight: "bold" }}>
+                      {fortifyLevel >= maxFortifyLevel
+                        ? "MAX"
+                        : `${fortifyCost}g`}
+                    </span>
+                  </span>
+                </button>
+                {/* XP bar showing fortify progress */}
+                {fortifyLevel > 0 && (
+                  <div style={{ marginBottom: 6 }}>
+                    <div
+                      style={{
+                        height: 2,
+                        background: "#1e293b",
+                        borderRadius: 2,
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${(fortifyLevel / maxFortifyLevel) * 100}%`,
+                          background: "#fbbf24",
+                          borderRadius: 2,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <button
+                  onClick={onStartWave}
+                  style={{
+                    width: "100%",
+                    padding: "10px",
+                    background: "#0f2a0f",
+                    border: "1px solid #4ade80",
+                    borderRadius: 5,
+                    color: "#4ade80",
+                    fontFamily: mono,
+                    fontSize: 12,
+                    fontWeight: "bold",
+                    cursor: "pointer",
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  ▶ SEND WAVE {wave + 1}
+                  {bossWaves[wave + 1] ? " 💀 BOSS" : ""}
+                </button>
+              </>
             )}
             {state === "wave" && (
               <div
@@ -1451,6 +1618,124 @@ export function HUD({
           </div>
         </div>
       )}
+
+      {/* High Scores */}
+      <div
+        style={{
+          marginTop: 10,
+          borderTop: "1px solid #1e293b",
+          paddingTop: 8,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 6,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 9,
+              color: "#facc15",
+              letterSpacing: "0.1em",
+            }}
+          >
+            🏆 HIGH SCORES
+          </div>
+          {highScores.length > 0 && (
+            <button
+              onClick={onClearScores}
+              style={{
+                fontSize: 8,
+                fontFamily: mono,
+                padding: "1px 5px",
+                background: "transparent",
+                border: "1px solid #374151",
+                borderRadius: 3,
+                color: "#475569",
+                cursor: "pointer",
+              }}
+            >
+              clear
+            </button>
+          )}
+        </div>
+        {highScores.length === 0 ? (
+          <div style={{ fontSize: 9, color: "#374151" }}>
+            No scores yet. Play a game!
+          </div>
+        ) : (
+          highScores.map((s, i) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                marginBottom: 4,
+                padding: "3px 6px",
+                background: i === 0 ? "#1a1a0a" : "transparent",
+                borderRadius: 4,
+                border: i === 0 ? "1px solid #facc15" : "1px solid transparent",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: "bold",
+                  color:
+                    i === 0
+                      ? "#facc15"
+                      : i === 1
+                        ? "#94a3b8"
+                        : i === 2
+                          ? "#b45309"
+                          : "#374151",
+                  minWidth: 14,
+                }}
+              >
+                #{i + 1}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 10, color: "#e2e8f0" }}>
+                  {s.score.toLocaleString()}
+                </div>
+                <div style={{ fontSize: 8, color: "#6b7280" }}>
+                  {s.levelName} · W{s.wave} ·{" "}
+                  {s.won ? (
+                    <span style={{ color: "#4ade80" }}>WIN</span>
+                  ) : (
+                    <span style={{ color: "#ef4444" }}>LOSS</span>
+                  )}{" "}
+                  · {s.date}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+        {hasSave && (
+          <div style={{ marginTop: 8 }}>
+            <button
+              onClick={onDeleteSave}
+              style={{
+                width: "100%",
+                fontSize: 9,
+                fontFamily: mono,
+                padding: "3px",
+                background: "transparent",
+                border: "1px solid #3a1a1a",
+                borderRadius: 3,
+                color: "#6b7280",
+                cursor: "pointer",
+              }}
+            >
+              🗑 Delete current save
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1465,9 +1750,11 @@ function SkillBtn({
   gold,
   onUpgrade,
   tower,
+  scaledCost,
 }) {
   if (!skillDef) return null;
-  const canBuy = !locked && !taken && gold >= skillDef.cost;
+  const displayCost = scaledCost ?? skillDef.cost;
+  const canBuy = !locked && !taken && gold >= displayCost;
   return (
     <button
       onClick={() => canBuy && onUpgrade(tower.col, tower.row, skillType, path)}
@@ -1513,13 +1800,13 @@ function SkillBtn({
         <div
           style={{
             fontSize: 10,
-            color: gold >= skillDef.cost ? "#facc15" : "#374151",
+            color: gold >= displayCost ? "#facc15" : "#374151",
             fontWeight: "bold",
             minWidth: 36,
             textAlign: "right",
           }}
         >
-          {skillDef.cost}g
+          {displayCost}g
         </div>
       )}
     </button>
@@ -1530,6 +1817,7 @@ function SkillBtn({
 function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
   const def = TOWER_TYPES[tower.type];
   const upgDef = TOWER_UPGRADES[tower.type];
+
   if (!def || !upgDef)
     return <div style={{ fontSize: 10, color: "#374151" }}>No upgrades.</div>;
 
@@ -1539,6 +1827,17 @@ function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
     s10 = upgDef.skill10;
   const l50 = upgDef.legendary50,
     l100 = upgDef.legendary100;
+
+  const l50ScaledCost = l50?.A?.cost
+    ? Math.floor(l50.A.cost * (1 + currentWave * 0.04))
+    : l50?.B?.cost
+      ? Math.floor(l50.B.cost * (1 + currentWave * 0.04))
+      : 0;
+  const l100ScaledCost = l100?.A?.cost
+    ? Math.floor(l100.A.cost * (1 + currentWave * 0.06))
+    : l100?.B?.cost
+      ? Math.floor(l100.B.cost * (1 + currentWave * 0.06))
+      : 0;
 
   return (
     <div>
@@ -1739,6 +2038,7 @@ function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
             gold={gold}
             onUpgrade={onUpgrade}
             tower={tower}
+            scaledCost={l50ScaledCost}
           />
           <SkillBtn
             skillType="legendary50"
@@ -1753,6 +2053,7 @@ function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
             gold={gold}
             onUpgrade={onUpgrade}
             tower={tower}
+            scaledCost={l50ScaledCost}
           />
         </>
       )}
@@ -1787,6 +2088,7 @@ function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
             gold={gold}
             onUpgrade={onUpgrade}
             tower={tower}
+            scaledCost={l100ScaledCost}
           />
           <SkillBtn
             skillType="legendary100"
@@ -1800,6 +2102,7 @@ function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
             gold={gold}
             onUpgrade={onUpgrade}
             tower={tower}
+            scaledCost={l100ScaledCost}
           />
         </>
       )}

@@ -649,7 +649,7 @@ export class WaveAI {
     let globalDelay = 0;
     const delayFactor = Math.max(0.4, 1 - progress * 0.55);
 
-    const rewardMult = 1 + (waveNumber - 1) * 0.07;
+    const rewardMult = 1 + Math.sqrt(waveNumber - 1) * 0.2;
 
     const GROUP_SIZE = 4;
     const INTRA_DELAY = 10;

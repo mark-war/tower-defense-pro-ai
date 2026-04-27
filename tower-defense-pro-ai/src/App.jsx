@@ -3,6 +3,26 @@ import { GameEngine } from "./GameEngine.js";
 import { HUD } from "./HUD.jsx";
 import { CELL_SIZE } from "./gameConstants.js";
 
+const LS_SAVE = "towerDefense_save";
+const LS_SCORES = "towerDefense_highScores";
+
+function loadScores() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_SCORES) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function addHighScore(entry) {
+  const scores = loadScores();
+  scores.push(entry);
+  scores.sort((a, b) => b.score - a.score);
+  const top = scores.slice(0, 10);
+  localStorage.setItem(LS_SCORES, JSON.stringify(top));
+  return top;
+}
+
 export default function App() {
   const canvasRef = useRef(null);
   const engineRef = useRef(null);
@@ -10,8 +30,12 @@ export default function App() {
   const [selectedTower, setSelected] = useState("basic");
   const [activeTab, setActiveTab] = useState("build");
   const [sellMode, setSellMode] = useState(false);
-  const [currentLevel, setCurrentLevel] = useState(99); // default to last level for easy testing
+  const [currentLevel, setCurrentLevel] = useState(99);
   const [inspectedEnemy, setInspectedEnemy] = useState(null);
+  const [highScores, setHighScores] = useState(loadScores);
+  const [hasSave, setHasSave] = useState(() => !!localStorage.getItem(LS_SAVE));
+  const [saveToast, setSaveToast] = useState("");
+  const scoreRecordedRef = useRef(false);
 
   // ── Boot ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -19,16 +43,131 @@ export default function App() {
     const engine = new GameEngine(
       canvasRef.current,
       (s) => {
-        // Expose selectedTowerCell on state for HUD
         setGameState({ ...s, selectedTowerCell: engine.selectedTowerCell });
       },
-      99, // default to last level for easy testing
+      99,
     );
     engineRef.current = engine;
     return () => engine.destroy();
   }, []);
 
-  // ── Cell coordinate helper ────────────────────────────────────────────────────
+  // ── High score — record once on game end ──────────────────────────────────────
+  const gsState = gameState?.state;
+  const gsScore = gameState?.score;
+  const gsWave = gameState?.wave;
+  const gsLevelName = gameState?.levelName;
+  const gsLevelId = gameState?.levelId;
+
+  useEffect(() => {
+    if (
+      (gsState === "gameover" || gsState === "victory") &&
+      !scoreRecordedRef.current
+    ) {
+      scoreRecordedRef.current = true;
+      const updated = addHighScore({
+        score: gsScore,
+        wave: gsWave,
+        levelName: gsLevelName,
+        levelId: gsLevelId,
+        won: gsState === "victory",
+        date: new Date().toLocaleDateString(),
+      });
+      // Defer state updates to avoid synchronous setState inside an effect body
+      setTimeout(() => {
+        setHighScores(updated);
+        localStorage.removeItem(LS_SAVE);
+        setHasSave(false);
+      }, 0);
+    }
+    if (gsState === "wave" || gsState === "idle") {
+      scoreRecordedRef.current = false;
+    }
+  }, [gsState, gsScore, gsWave, gsLevelName, gsLevelId]);
+
+  // ── Save / Load ───────────────────────────────────────────────────────────────
+  const handleSave = useCallback(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    if (eng.state !== "idle") {
+      setSaveToast("⚠ Can only save between waves!");
+      setTimeout(() => setSaveToast(""), 2500);
+      return;
+    }
+    const data = eng.getSaveState();
+    localStorage.setItem(LS_SAVE, JSON.stringify(data));
+    setHasSave(true);
+    setSaveToast("✔ Game saved!");
+    setTimeout(() => setSaveToast(""), 2000);
+  }, []);
+
+  const handleLoad = useCallback(() => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    const raw = localStorage.getItem(LS_SAVE);
+    if (!raw) return;
+    try {
+      const save = JSON.parse(raw);
+      const ok = eng.loadSaveState(save);
+      if (!ok) {
+        setSaveToast("⚠ Save file incompatible.");
+        setTimeout(() => setSaveToast(""), 2500);
+        return;
+      }
+      setCurrentLevel(save.levelId);
+      setSelected(save.selectedTowerType || "basic");
+      setSellMode(false);
+      setActiveTab("build");
+      scoreRecordedRef.current = false;
+      setSaveToast("✔ Game loaded!");
+      setTimeout(() => setSaveToast(""), 2000);
+    } catch (err) {
+      console.error("Load failed", err);
+      setSaveToast("⚠ Save data corrupt.");
+      setTimeout(() => setSaveToast(""), 2500);
+    }
+  }, []);
+
+  const handleDeleteSave = useCallback(() => {
+    localStorage.removeItem(LS_SAVE);
+    setHasSave(false);
+    setSaveToast("Save deleted.");
+    setTimeout(() => setSaveToast(""), 1800);
+  }, []);
+
+  const handleClearScores = useCallback(() => {
+    localStorage.removeItem(LS_SCORES);
+    setHighScores([]);
+  }, []);
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e) => {
+      const eng = engineRef.current;
+      if (!eng) return;
+      // Pause: Space or P (not when typing in inputs)
+      if (
+        (e.code === "Space" || e.code === "KeyP") &&
+        !["INPUT", "TEXTAREA"].includes(e.target.tagName)
+      ) {
+        e.preventDefault();
+        eng.togglePause();
+      }
+      // Quick-save: Ctrl+S
+      if (e.code === "KeyS" && e.ctrlKey) {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []); // eslint-disable-line
+
+  // ── Pause ─────────────────────────────────────────────────────────────────────
+  const handlePause = useCallback(() => {
+    engineRef.current?.togglePause();
+  }, []);
+
+  // ── Cell coordinate helper ─────────────────────────────────────────────────────
   const getCell = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     const scaleX = canvasRef.current.width / rect.width;
@@ -39,16 +178,16 @@ export default function App() {
     };
   }, []);
 
-  // ── Canvas click ──────────────────────────────────────────────────────────────
+  // ── Canvas click ───────────────────────────────────────────────────────────────
   const handleClick = useCallback(
     (e) => {
       if (!engineRef.current) return;
+      if (gameState?.paused) return; // ignore clicks while paused
 
       const rect = canvasRef.current.getBoundingClientRect();
       const px = e.clientX - rect.left;
       const py = e.clientY - rect.top;
 
-      // Check for enemy click first during wave
       if (gameState?.state === "wave") {
         const enemy = engineRef.current?.getEnemyAtPixel(px, py);
         if (enemy) {
@@ -61,7 +200,6 @@ export default function App() {
       if (sellMode) {
         engineRef.current.sellTower(col, row);
       } else if (activeTab === "upgrade") {
-        // Click in upgrade mode: select tower for panel
         engineRef.current.selectTowerCell(col, row);
         setGameState((s) => ({
           ...s,
@@ -70,7 +208,6 @@ export default function App() {
       } else {
         const placed = engineRef.current.placeTower(col, row);
         if (!placed && engineRef.current.grid[row]?.[col]) {
-          // Clicked an existing tower while in build mode → switch to upgrade tab and select it
           engineRef.current.selectTowerCell(col, row);
           setActiveTab("upgrade");
           setGameState((s) => ({
@@ -80,7 +217,7 @@ export default function App() {
         }
       }
     },
-    [sellMode, activeTab, getCell, gameState?.state],
+    [sellMode, activeTab, getCell, gameState?.state, gameState?.paused],
   );
 
   const handleMouseMove = useCallback(
@@ -96,17 +233,15 @@ export default function App() {
     engineRef.current?.setHoveredCell(-1, -1);
   }, []);
 
-  // ── HUD handlers ─────────────────────────────────────────────────────────────
+  // ── HUD handlers ───────────────────────────────────────────────────────────────
   const handleSelectTower = useCallback((type) => {
     setSelected(type);
     setSellMode(false);
     engineRef.current?.setSelectedTowerType(type);
-    engineRef.current?.selectTowerCell(-1, -1); // deselect
+    engineRef.current?.selectTowerCell(-1, -1);
   }, []);
 
-  const handleSellMode = useCallback(() => {
-    setSellMode((m) => !m);
-  }, []);
+  const handleSellMode = useCallback(() => setSellMode((m) => !m), []);
 
   const handleStartWave = useCallback(() => {
     engineRef.current?.startWave();
@@ -118,6 +253,7 @@ export default function App() {
       const id = levelId || currentLevel;
       setCurrentLevel(id);
       setSellMode(false);
+      scoreRecordedRef.current = false;
       engineRef.current.reset(id);
       const firstTower = engineRef.current.levelConfig?.unlockedTowers?.[0];
       if (firstTower) {
@@ -133,6 +269,7 @@ export default function App() {
     setCurrentLevel(levelId);
     setSellMode(false);
     setActiveTab("build");
+    scoreRecordedRef.current = false;
     engineRef.current?.reset(levelId);
     const firstTower = engineRef.current?.levelConfig?.unlockedTowers?.[0];
     if (firstTower) {
@@ -145,8 +282,7 @@ export default function App() {
   const handleSetTab = useCallback((tab) => setActiveTab(tab), []);
 
   const handleUpgrade = useCallback((col, row, tier, path) => {
-    if (!engineRef.current) return;
-    engineRef.current.upgradeTower(col, row, tier, path);
+    engineRef.current?.upgradeTower(col, row, tier, path);
   }, []);
 
   const handleTriggerAbility = useCallback((key) => {
@@ -163,7 +299,12 @@ export default function App() {
     setActiveTab("upgrade");
   }, []);
 
+  const handleFortify = useCallback(() => {
+    engineRef.current?.fortify();
+  }, []);
+
   const getCursor = () => {
+    if (gameState?.paused) return "default";
     if (sellMode) return "cell";
     if (activeTab === "upgrade") return "pointer";
     return "crosshair";
@@ -179,6 +320,29 @@ export default function App() {
         background: "#0a0a0f",
       }}
     >
+      {/* Toast */}
+      {saveToast && (
+        <div
+          style={{
+            position: "fixed",
+            top: 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+            background: "#1e293b",
+            border: "1px solid #38bdf8",
+            borderRadius: 6,
+            padding: "8px 18px",
+            color: "#e2e8f0",
+            fontFamily: "'Courier New', monospace",
+            fontSize: 13,
+            pointerEvents: "none",
+          }}
+        >
+          {saveToast}
+        </div>
+      )}
+
       {/* Canvas */}
       <div
         style={{
@@ -210,6 +374,8 @@ export default function App() {
         selectedTower={selectedTower}
         activeTab={activeTab}
         sellMode={sellMode}
+        hasSave={hasSave}
+        highScores={highScores}
         onSelectTower={handleSelectTower}
         onSellMode={handleSellMode}
         onStartWave={handleStartWave}
@@ -220,6 +386,12 @@ export default function App() {
         onTriggerAbility={handleTriggerAbility}
         onTowerCellClick={handleTowerCellClick}
         onClearEnemyInspect={() => setInspectedEnemy(null)}
+        onFortify={handleFortify}
+        onPause={handlePause}
+        onSave={handleSave}
+        onLoad={handleLoad}
+        onDeleteSave={handleDeleteSave}
+        onClearScores={handleClearScores}
       />
     </div>
   );

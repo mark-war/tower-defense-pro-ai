@@ -17,6 +17,7 @@ const mono = "'Courier New', monospace";
 
 export function HUD({
   gameState,
+  playerProfile,
   selectedTower,
   activeTab,
   sellMode,
@@ -90,7 +91,28 @@ export function HUD({
     maxFortifyLevel = 20,
   } = gameState;
 
+  const aiReport = aiSummary?.report;
+  const showWaveDebrief = state === "idle" && wave > 0 && aiReport?.lastWave;
+  const forecast = aiReport?.forecast;
+  const debriefStatusColor = {
+    success: "#4ade80",
+    warning: "#fbbf24",
+    danger: "#ef4444",
+    neutral: "#94a3b8",
+  };
+  const forecastConfidenceColor = {
+    certain: "#ef4444",
+    high: "#f97316",
+    medium: "#fbbf24",
+    low: "#38bdf8",
+  };
+
   const gm = getGlobalMemory();
+  const commanderStats = playerProfile?.stats || null;
+  const commanderRank = commanderStats
+    ? getCommanderRank(commanderStats)
+    : null;
+  const rivalDossier = getRivalDossier(gm);
   const canAfford = (cost) => gold >= cost;
   const isUnlocked = (t) => unlockedTowers.includes(t);
   const catLeft = (cat) =>
@@ -266,6 +288,25 @@ export function HUD({
         )}
         <div
           style={{
+            marginBottom: 6,
+            padding: "4px 8px",
+            background: "#0b1220",
+            border: "1px solid #22304a",
+            borderRadius: 4,
+            fontSize: 10,
+            color: "#93c5fd",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <span>Commander</span>
+          <span style={{ color: "#e2e8f0", fontWeight: "bold" }}>
+            {playerProfile?.name || "Unregistered"}
+          </span>
+        </div>
+        <div
+          style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr 1fr 1fr",
             gap: 4,
@@ -409,6 +450,72 @@ export function HUD({
           </button>
         </div>
       </div>
+
+      {showWaveDebrief && (
+        <div
+          style={{
+            margin: "8px 10px 0",
+            padding: "10px 12px",
+            background: "#10131c",
+            border: "1px solid #334155",
+            borderRadius: 6,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 9,
+              color:
+                debriefStatusColor[aiReport.lastWave.status] || "#a78bfa",
+              letterSpacing: "0.08em",
+              marginBottom: 6,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>POST-WAVE DEBRIEF</span>
+            <span
+              style={{
+                fontSize: 8,
+                padding: "2px 6px",
+                borderRadius: 4,
+                border: `1px solid ${debriefStatusColor[aiReport.lastWave.status] || "#475569"}`,
+                color: debriefStatusColor[aiReport.lastWave.status] || "#94a3b8",
+                background: "#111827",
+                textTransform: "uppercase",
+              }}
+            >
+              {aiReport.lastWave.statusLabel}
+            </span>
+          </div>
+
+          <div
+            style={{
+              fontSize: 11,
+              color: debriefStatusColor[aiReport.lastWave.status] || "#e2e8f0",
+              fontWeight: "bold",
+              marginBottom: 4,
+            }}
+          >
+            {aiReport.lastWave.headline}
+          </div>
+
+          <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.5 }}>
+            {aiReport.lastWave.summary}
+          </div>
+
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 10,
+              color: "#fbbf24",
+              lineHeight: 1.5,
+            }}
+          >
+            {aiReport.suggestion}
+          </div>
+        </div>
+      )}
 
       {/* ── TABS ─────────────────────────────────────────────────────────── */}
       <div
@@ -1165,6 +1272,8 @@ export function HUD({
           >
             {nextWaveMessage}
           </div>
+
+          {/* DETECTED STRATEGY */}
           <Sect label="DETECTED STRATEGY">
             <div
               style={{
@@ -1180,6 +1289,302 @@ export function HUD({
                   : "No pattern yet"}
             </div>
           </Sect>
+
+          <Sect label="RIVAL DOSSIER">
+            <div
+              style={{
+                background: "#111827",
+                border: "1px solid #1e293b",
+                borderRadius: 6,
+                padding: "8px 9px",
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "7px 10px",
+                marginBottom: 8,
+              }}
+            >
+              {[
+                ["Observed Runs", rivalDossier.observedRuns, "#e879f9"],
+                ["Total Waves", rivalDossier.totalWaves, "#93c5fd"],
+                ["Favored Tower", rivalDossier.favoredTower, "#c4b5fd"],
+                ["Best Exploit", rivalDossier.favoriteExploit, "#fca5a5"],
+                ["Targeted Style", rivalDossier.targetedStrategy, "#fbbf24"],
+                ["Boss Pressure", rivalDossier.bossPattern, "#86efac"],
+              ].map(([label, value, color]) => (
+                <div key={label}>
+                  <div style={{ fontSize: 8, color: "#475569" }}>{label}</div>
+                  <div style={{ fontSize: 11, color, fontWeight: "bold" }}>
+                    {value}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div
+              style={{
+                background: "#0f172a",
+                border: "1px solid #1e293b",
+                borderRadius: 6,
+                padding: "8px 9px",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 9,
+                  color: "#64748b",
+                  letterSpacing: "0.08em",
+                  marginBottom: 4,
+                }}
+              >
+                RIVAL ASSESSMENT
+              </div>
+              <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.55 }}>
+                {rivalDossier.assessment}
+              </div>
+            </div>
+          </Sect>
+
+          {commanderStats && (
+            <Sect label="COMMANDER RECORD">
+              <div
+                style={{
+                  background: "#111827",
+                  border: "1px solid #1e293b",
+                  borderRadius: 6,
+                  padding: "8px 9px",
+                }}
+              >
+                <div
+                  style={{
+                    paddingBottom: 8,
+                    marginBottom: 8,
+                    borderBottom: "1px solid #1e293b",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
+                      gap: 8,
+                      marginBottom: 4,
+                    }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          fontSize: 8,
+                          color: "#475569",
+                          letterSpacing: "0.08em",
+                        }}
+                      >
+                        COMMANDER RANK
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: "bold",
+                          color: commanderRank.color,
+                        }}
+                      >
+                        {commanderRank.title}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 18,
+                        fontWeight: "bold",
+                        color: commanderRank.color,
+                      }}
+                    >
+                      Lv {commanderRank.level}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      height: 6,
+                      background: "#0b1220",
+                      borderRadius: 4,
+                      overflow: "hidden",
+                      marginBottom: 4,
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${commanderRank.progressPct}%`,
+                        background: commanderRank.color,
+                        borderRadius: 4,
+                      }}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 8,
+                      color: "#64748b",
+                    }}
+                  >
+                    <span>{commanderRank.points} prestige</span>
+                    <span>{commanderRank.nextLabel}</span>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "6px 10px",
+                  }}
+                >
+                {[
+                  ["Runs", commanderStats.totalRuns, "#93c5fd"],
+                  ["Wins", commanderStats.totalWins, "#86efac"],
+                  ["Best Wave", commanderStats.bestWave, "#fbbf24"],
+                  ["Best Score", commanderStats.bestScore.toLocaleString(), "#e2e8f0"],
+                  [
+                    "Favorite",
+                    TOWER_TYPES[commanderStats.favoriteTower]?.name ||
+                      commanderStats.favoriteTower ||
+                      "None",
+                    "#c4b5fd",
+                  ],
+                  [
+                    "Kills",
+                    commanderStats.totalEnemiesDestroyed.toLocaleString(),
+                    "#fca5a5",
+                  ],
+                ].map(([label, value, color]) => (
+                  <div key={label}>
+                    <div style={{ fontSize: 8, color: "#475569" }}>{label}</div>
+                    <div style={{ fontSize: 11, color, fontWeight: "bold" }}>
+                      {value}
+                    </div>
+                  </div>
+                ))}
+                </div>
+              </div>
+            </Sect>
+          )}
+
+          <div
+            style={{ fontSize: 9, color: "#475569", letterSpacing: "0.08em" }}
+          >
+            RIVAL INTELLIGENCE FEED
+          </div>
+          {/* AI REPORT */}
+          <Sect label="AI REPORT">
+            <div
+              style={{
+                background: "#111827",
+                border: "1px solid #1e293b",
+                borderRadius: 6,
+                padding: "10px 10px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              <div style={{ fontSize: 10, color: "#a78bfa", lineHeight: 1.5 }}>
+                {aiReport?.tone || "No AI tone available yet."}
+              </div>
+
+              <div style={{ fontSize: 10, color: "#fca5a5", lineHeight: 1.5 }}>
+                {aiReport?.taunt || "The rival has not spoken yet."}
+              </div>
+
+              <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.5 }}>
+                {aiReport?.debrief || "No debrief available yet."}
+              </div>
+
+              <div
+                style={{
+                  background: "#0b1220",
+                  border: "1px solid #22304a",
+                  borderRadius: 5,
+                  padding: "8px 8px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 4,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: "#fbbf24",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {forecast?.headline || "No forecast available yet."}
+                  </div>
+                  {forecast?.confidence && (
+                    <span
+                      style={{
+                        fontSize: 8,
+                        padding: "2px 5px",
+                        borderRadius: 4,
+                        border: `1px solid ${forecastConfidenceColor[forecast.confidence] || "#475569"}`,
+                        color:
+                          forecastConfidenceColor[forecast.confidence] ||
+                          "#94a3b8",
+                        background: "#111827",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {forecast.confidence}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 9, color: "#94a3b8", marginBottom: 3 }}>
+                  Source: {forecast?.source || "None"}
+                </div>
+                <div style={{ fontSize: 10, color: "#fbbf24", lineHeight: 1.5 }}>
+                  {forecast?.detail || "The AI does not have a clear read yet."}
+                </div>
+              </div>
+
+              <div style={{ fontSize: 10, color: "#86efac", lineHeight: 1.5 }}>
+                {aiReport?.suggestion || "No suggestion available yet."}
+              </div>
+
+              {aiReport?.counterplay && (
+                <div
+                  style={{
+                    borderTop: "1px solid #1e293b",
+                    paddingTop: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 9,
+                      color: aiReport.counterplay.color,
+                      marginBottom: 3,
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    {aiReport.counterplay.label}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: aiReport.counterplay.color,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {aiReport.counterplay.text}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Sect>
+
           {(aiSummary?.weaknesses || []).length > 0 && (
             <Sect label="EXPLOITING YOUR GAPS">
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -1701,6 +2106,9 @@ export function HUD({
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 10, color: "#e2e8f0" }}>
                   {s.score.toLocaleString()}
+                </div>
+                <div style={{ fontSize: 8, color: "#93c5fd" }}>
+                  {s.playerName || "Unknown Commander"}
                 </div>
                 <div style={{ fontSize: 8, color: "#6b7280" }}>
                   {s.levelName} · W{s.wave} ·{" "}
@@ -2416,4 +2824,131 @@ function Tag({ c, tc, children }) {
       {children}
     </span>
   );
+}
+
+function getCommanderRank(stats) {
+  const points =
+    stats.totalRuns * 10 +
+    stats.totalWins * 35 +
+    stats.bestWave * 4 +
+    Math.floor(stats.bestScore / 250) +
+    Math.floor(stats.totalEnemiesDestroyed / 20);
+
+  const tiers = [
+    { min: 0, title: "Cadet", color: "#93c5fd" },
+    { min: 120, title: "Lieutenant", color: "#86efac" },
+    { min: 280, title: "Captain", color: "#fbbf24" },
+    { min: 520, title: "Major", color: "#f97316" },
+    { min: 900, title: "Commander", color: "#c084fc" },
+    { min: 1400, title: "Marshal", color: "#f472b6" },
+  ];
+
+  let currentTier = tiers[0];
+  let nextTier = null;
+
+  for (let i = 0; i < tiers.length; i++) {
+    if (points >= tiers[i].min) {
+      currentTier = tiers[i];
+      nextTier = tiers[i + 1] || null;
+    }
+  }
+
+  const currentFloor = currentTier.min;
+  const nextFloor = nextTier?.min || currentFloor;
+  const span = Math.max(1, nextFloor - currentFloor);
+  const progressPct = nextTier
+    ? Math.max(0, Math.min(100, ((points - currentFloor) / span) * 100))
+    : 100;
+
+  return {
+    title: currentTier.title,
+    color: currentTier.color,
+    points,
+    level: Math.max(1, 1 + Math.floor(points / 120)),
+    progressPct,
+    nextLabel: nextTier
+      ? `${Math.max(0, nextTier.min - points)} to ${nextTier.title}`
+      : "Max tier reached",
+  };
+}
+
+function getTopMemoryKey(record) {
+  let topKey = null;
+  let topValue = -Infinity;
+
+  for (const [key, value] of Object.entries(record || {})) {
+    if (typeof value !== "number") continue;
+    if (value > topValue) {
+      topKey = key;
+      topValue = value;
+    }
+  }
+
+  return topKey;
+}
+
+function getBestBossPressure(bossEncounters) {
+  let bestBoss = null;
+  let bestRate = -1;
+
+  for (const [bossKey, entry] of Object.entries(bossEncounters || {})) {
+    const encounters = entry?.encounters || 0;
+    if (!encounters) continue;
+    const kills = entry?.kills || 0;
+    const failRate = 1 - kills / encounters;
+    if (failRate > bestRate) {
+      bestBoss = bossKey;
+      bestRate = failRate;
+    }
+  }
+
+  return bestBoss;
+}
+
+function getRivalDossier(memory) {
+  const favoredTowerKey = getTopMemoryKey(memory?.towerUsageHistory);
+  const favoredTower =
+    TOWER_TYPES[favoredTowerKey]?.name || favoredTowerKey || "Insufficient data";
+
+  const exploitKey = getTopMemoryKey(memory?.weaknessSuccessRate);
+  const favoriteExploit =
+    ENEMY_TYPES[exploitKey]?.name ||
+    TOWER_TYPES[exploitKey]?.name ||
+    exploitKey ||
+    "No stable exploit";
+
+  const strategyKey = getTopMemoryKey(memory?.strategyCounterHistory);
+  const targetedStrategy =
+    TOWER_TYPES[strategyKey]?.name || strategyKey || "Mixed builds";
+
+  const bossKey = getBestBossPressure(memory?.bossEncounters);
+  const bossPattern =
+    ENEMY_TYPES[bossKey]?.name || bossKey || "Boss reads still forming";
+
+  const observedRuns = memory?.gamesPlayed || 0;
+  const totalWaves = memory?.totalWavesSurvived || 0;
+  const exploitRate =
+    exploitKey && typeof memory?.weaknessSuccessRate?.[exploitKey] === "number"
+      ? Math.round(memory.weaknessSuccessRate[exploitKey] * 100)
+      : null;
+
+  let assessment =
+    "The rival is still young. It has not gathered enough evidence to form a dangerous long-term profile.";
+
+  if (observedRuns >= 2) {
+    assessment = `The rival has observed ${observedRuns} runs and prefers ${favoriteExploit} pressure against ${targetedStrategy}.`;
+  }
+  if (observedRuns >= 4 && exploitRate !== null) {
+    assessment = `The rival now expects ${favoriteExploit} to work ${exploitRate}% of the time and is increasingly willing to commit around ${bossPattern}.`;
+  }
+
+  return {
+    observedRuns,
+    totalWaves,
+    favoredTower,
+    favoriteExploit,
+    targetedStrategy,
+    bossPattern,
+    assessment,
+  };
 }

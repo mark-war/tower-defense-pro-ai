@@ -10,16 +10,42 @@ import {
 } from "./gameConstants.js";
 
 const CFG = ADMIN_CONFIG.ai;
+const LS_AI_MEMORY = "towerDefense_aiMemory";
 
-let GLOBAL_MEMORY = {
-  gamesPlayed: 0,
-  towerUsageHistory: {},
-  weaknessSuccessRate: {},
-  strategyCounterHistory: {},
-  playerTendencies: {},
-  totalWavesSurvived: 0,
-  bossEncounters: {},
-};
+function defaultGlobalMemory() {
+  return {
+    gamesPlayed: 0,
+    towerUsageHistory: {},
+    weaknessSuccessRate: {},
+    strategyCounterHistory: {},
+    playerTendencies: {},
+    totalWavesSurvived: 0,
+    bossEncounters: {},
+  };
+}
+
+function loadGlobalMemory() {
+  if (typeof localStorage === "undefined") {
+    return defaultGlobalMemory();
+  }
+
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_AI_MEMORY) || "null");
+    return {
+      ...defaultGlobalMemory(),
+      ...(raw || {}),
+    };
+  } catch {
+    return defaultGlobalMemory();
+  }
+}
+
+function saveGlobalMemory() {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(LS_AI_MEMORY, JSON.stringify(GLOBAL_MEMORY));
+}
+
+let GLOBAL_MEMORY = loadGlobalMemory();
 
 export function getGlobalMemory() {
   return GLOBAL_MEMORY;
@@ -40,6 +66,8 @@ export class WaveAI {
       preferredStrategy: null,
       weaknesses: [],
       towerSpread: 1,
+      lastWaveReport: null,
+      lastCounterplay: null,
     };
 
     this.waveHistory = [];
@@ -75,6 +103,7 @@ export class WaveAI {
     });
     GLOBAL_MEMORY.towerUsageHistory[towerType] =
       (GLOBAL_MEMORY.towerUsageHistory[towerType] || 0) + 1;
+    saveGlobalMemory();
   }
 
   recordWaveResults({
@@ -83,6 +112,7 @@ export class WaveAI {
     damageByTower,
     goldSpent,
     wave,
+    currentTowerCounts = {},
   }) {
     const p = this.playerProfile;
     p.wavesSurvived = wave;
@@ -102,7 +132,22 @@ export class WaveAI {
     });
     this._analyzePlayer();
 
+    this.playerProfile.lastWaveReport = {
+      wave,
+      enemiesKilled,
+      enemiesLeaked,
+      goldSpent,
+      topDamageTower: this._getTopDamageTowerType(damageByTower),
+    };
+
     const lastLog = this.adaptationLog[this.adaptationLog.length - 1];
+    this.playerProfile.lastCounterplay = this._evaluateCounterplay(
+      lastLog,
+      enemiesLeaked,
+      currentTowerCounts,
+      damageByTower,
+      wave,
+    );
     if (lastLog) {
       for (const w of lastLog.weaknesses || []) {
         const prev = GLOBAL_MEMORY.weaknessSuccessRate[w] || 0.5;
@@ -111,6 +156,7 @@ export class WaveAI {
       }
     }
     GLOBAL_MEMORY.totalWavesSurvived++;
+    saveGlobalMemory();
   }
 
   recordBossResult(bossType, killed, towerUsed) {
@@ -122,6 +168,7 @@ export class WaveAI {
       bm[bossType].kills++;
       if (towerUsed) bm[bossType].weaknessDiscovered = true;
     }
+    saveGlobalMemory();
   }
 
   finalizeGame(won) {
@@ -138,6 +185,7 @@ export class WaveAI {
       GLOBAL_MEMORY.strategyCounterHistory[key] =
         (GLOBAL_MEMORY.strategyCounterHistory[key] || 0) + 1;
     }
+    saveGlobalMemory();
   }
 
   _analyzePlayer() {
@@ -195,6 +243,80 @@ export class WaveAI {
     });
 
     this.playerProfile.weaknesses = boosted;
+  }
+
+  _getTopDamageTowerType(damageByTower) {
+    let topType = null;
+    let topValue = -1;
+
+    for (const [type, value] of Object.entries(damageByTower || {})) {
+      if (value > topValue) {
+        topType = type;
+        topValue = value;
+      }
+    }
+
+    return topType;
+  }
+
+  _evaluateCounterplay(
+    lastLog,
+    enemiesLeaked,
+    currentTowerCounts,
+    damageByTower,
+    wave,
+  ) {
+    if (!lastLog) return null;
+
+    const threat = this._resolveForecastThreat(lastLog);
+    if (!threat) return null;
+
+    const counterMap = {
+      stealth: { primary: "laser", alternates: [] },
+      swarm: { primary: "cannon", alternates: ["vortex", "inferno"] },
+      fast: { primary: "freeze", alternates: ["vortex"] },
+      armored: { primary: "sniper", alternates: ["tesla", "inferno"] },
+      spread: { primary: "cannon", alternates: ["inferno", "vortex"] },
+      boss_colossus: { primary: "tesla", alternates: ["sniper"] },
+      boss_phantom: { primary: "laser", alternates: [] },
+      boss_titan: { primary: "cannon", alternates: ["vortex"] },
+      boss_voidreaper: { primary: "inferno", alternates: ["tesla"] },
+    };
+
+    const plan = counterMap[threat];
+    const topDamageTower = this._getTopDamageTowerType(damageByTower);
+    const primaryOnline = plan ? (currentTowerCounts[plan.primary] || 0) > 0 : false;
+    const alternateOnline = plan
+      ? plan.alternates.some((type) => (currentTowerCounts[type] || 0) > 0)
+      : false;
+    const answeredWithDamage = plan
+      ? topDamageTower === plan.primary || plan.alternates.includes(topDamageTower)
+      : false;
+
+    let result = "stalled";
+    if (enemiesLeaked === 0 && (primaryOnline || alternateOnline || answeredWithDamage)) {
+      result = "countered";
+    } else if (enemiesLeaked === 0) {
+      result = "stabilized";
+    } else if (enemiesLeaked >= 3) {
+      result = "punished";
+    }
+
+    return {
+      wave,
+      threat,
+      result,
+      primaryCounter: plan?.primary || null,
+      topDamageTower,
+      leaks: enemiesLeaked,
+    };
+  }
+
+  _resolveForecastThreat(lastLog) {
+    if (lastLog?.forecast?.threat) return lastLog.forecast.threat;
+    if (lastLog?.bossType) return lastLog.bossType;
+    if (lastLog?.weaknesses?.length > 0) return lastLog.weaknesses[0];
+    return null;
   }
 
   _calculateTowerSpread() {
@@ -295,6 +417,7 @@ export class WaveAI {
       weaknesses: [...this.playerProfile.weaknesses],
       bossType,
       message: finalMessage,
+      forecast: plan.forecast || null,
     });
 
     return waveData;
@@ -404,6 +527,17 @@ export class WaveAI {
 
     return {
       composition: comp,
+      forecast: this._makeForecast(
+        "Late-game pressure",
+        secondary
+          ? `${primary || "Mixed"} + ${secondary} assault likely`
+          : `${primary || "Mixed"} assault likely`,
+        secondary
+          ? "The AI is stacking two pressure vectors to break mature defenses."
+          : "The AI is entering its late-game pressure phase and committing to your softest lane.",
+        secondary ? "high" : "medium",
+        primary || secondary || "mixed",
+      ),
       message: `⚠ FINAL PUSH: Dual exploitation — ${primary || "overwhelming force"}.`,
     };
   }
@@ -809,14 +943,485 @@ export class WaveAI {
     return schedule[idx % schedule.length] || null;
   }
 
-  getAdaptationSummary() {
+  getAdaptationSummary(runtimeContext = {}) {
+    const recentAdaptation =
+      this.adaptationLog[this.adaptationLog.length - 1] || null;
+
     return {
       strategy: this.playerProfile.preferredStrategy,
       weaknesses: this.playerProfile.weaknesses,
       towerCounts: { ...this.playerProfile.towerCounts },
       gamesPlayed: GLOBAL_MEMORY.gamesPlayed,
-      recentAdaptation:
-        this.adaptationLog[this.adaptationLog.length - 1] || null,
+      recentAdaptation,
+      report: this._buildAiReport(recentAdaptation, runtimeContext),
+    };
+  }
+
+  _buildAiReport(recentAdaptation, runtimeContext) {
+    const strategy = this.playerProfile.preferredStrategy;
+    const weaknesses = this.playerProfile.weaknesses || [];
+    const primaryWeakness = weaknesses[0] || null;
+    const lastWave = this.playerProfile.lastWaveReport;
+    const lastCounterplay = this.playerProfile.lastCounterplay;
+
+    return {
+      tone: this._getAiTone(strategy),
+      taunt: this._buildTaunt(strategy, primaryWeakness, lastCounterplay),
+      debrief: this._buildDebrief(
+        strategy,
+        weaknesses,
+        recentAdaptation,
+        lastCounterplay,
+      ),
+      forecast: this._buildForecast(recentAdaptation, primaryWeakness),
+      suggestion: this._buildSuggestion(
+        primaryWeakness,
+        recentAdaptation,
+        runtimeContext,
+      ),
+      lastWave: this._buildLastWaveBreakdown(lastWave, lastCounterplay),
+      counterplay: this._buildCounterplayBeat(lastCounterplay),
+    };
+  }
+
+  _buildLastWaveBreakdown(lastWave, lastCounterplay) {
+    if (!lastWave) {
+      return {
+        headline: "No combat data yet.",
+        summary: "Start a wave to generate the first debrief.",
+        status: "neutral",
+        statusLabel: "Awaiting data",
+      };
+    }
+
+    const leakedText =
+      lastWave.enemiesLeaked > 0
+        ? `breach detected: ${lastWave.enemiesLeaked} enemy units got through`
+        : "defense held perfectly";
+
+    const carryType = lastWave.topDamageTower
+      ? TOWER_TYPES[lastWave.topDamageTower]?.name || lastWave.topDamageTower
+      : "No tower";
+
+    let status = "neutral";
+    let statusLabel = "Holding pattern";
+    let headline = `Wave ${lastWave.wave} analysis`;
+    let summary = `${leakedText}. Top damage came from ${carryType}.`;
+
+    if (lastCounterplay?.result === "countered") {
+      status = "success";
+      statusLabel = "Counter held";
+      headline = `Wave ${lastWave.wave}: counter held`;
+      summary = `You read the last threat correctly and shut it down. ${carryType} carried the damage line.`;
+    } else if (lastCounterplay?.result === "stabilized") {
+      status = "warning";
+      statusLabel = "Pressure survived";
+      headline = `Wave ${lastWave.wave}: pressure survived`;
+      summary = `The line held, but the AI still sees room to retry that angle. ${carryType} did most of the work.`;
+    } else if (lastCounterplay?.result === "punished") {
+      status = "danger";
+      statusLabel = "Exploit succeeded";
+      headline = `Wave ${lastWave.wave}: exploit succeeded`;
+      summary = `The AI found a working breach pattern. ${lastWave.enemiesLeaked} units got through before ${carryType} could stabilize the lane.`;
+    }
+
+    return {
+      headline,
+      summary,
+      status,
+      statusLabel,
+    };
+  }
+
+  _getAiTone(strategy) {
+    const tones = {
+      basic: "You rely on raw volume. Predictable.",
+      sniper: "Precision is elegant. It is also fragile.",
+      cannon: "Heavy blast patterns detected.",
+      laser: "Energy doctrine identified.",
+      freeze: "Control-focused defense logged.",
+      tesla: "Chain-response strategy recognized.",
+      inferno: "Sustained burn patterns observed.",
+      vortex: "Displacement tactics detected.",
+    };
+
+    return tones[strategy] || "I am still studying your defense pattern.";
+  }
+
+  _buildTaunt(strategy, weakness, lastCounterplay) {
+    if (lastCounterplay?.result === "countered") {
+      return "You adapted faster than expected. I will need a cleaner angle.";
+    }
+    if (lastCounterplay?.result === "punished") {
+      return "Your correction was too slow. The breach data is useful.";
+    }
+    if (weakness === "stealth") {
+      return "You still leave gaps in detection. Ghost units remain viable.";
+    }
+    if (weakness === "swarm") {
+      return "Your defenses struggle when the field gets crowded.";
+    }
+    if (weakness === "fast") {
+      return "Your response window is too slow for rapid assaults.";
+    }
+    if (weakness === "armored") {
+      return "Armor continues to blunt your strongest attacks.";
+    }
+    if (strategy) {
+      return `Your dependence on ${strategy.toUpperCase()} towers is becoming exploitable.`;
+    }
+    return "Every wave tells me more about how you think.";
+  }
+
+  _buildDebrief(strategy, weaknesses, recentAdaptation, lastCounterplay) {
+    if (!recentAdaptation) {
+      return "No combat read yet. Start a wave so the AI can profile your build.";
+    }
+
+    const weaknessText =
+      weaknesses.length > 0 ? weaknesses.slice(0, 2).join(", ") : "none yet";
+
+    if (lastCounterplay?.result === "countered") {
+      return `Detected strategy: ${strategy || "mixed"}. You answered the last ${lastCounterplay.threat} read and closed the leak window.`;
+    }
+    if (lastCounterplay?.result === "punished") {
+      return `Detected strategy: ${strategy || "mixed"}. The last ${lastCounterplay.threat} pressure wave still broke through your line.`;
+    }
+
+    return `Detected strategy: ${strategy || "mixed"}. Current pressure points: ${weaknessText}.`;
+  }
+
+  _buildCounterplayBeat(lastCounterplay) {
+    if (!lastCounterplay) return null;
+
+    const threatName =
+      ENEMY_TYPES[lastCounterplay.threat]?.name ||
+      TOWER_TYPES[lastCounterplay.threat]?.name ||
+      lastCounterplay.threat;
+    const counterName =
+      TOWER_TYPES[lastCounterplay.primaryCounter]?.name ||
+      lastCounterplay.primaryCounter;
+
+    if (lastCounterplay.result === "countered") {
+      return {
+        label: "Counterplay memory",
+        color: "#86efac",
+        text: `You answered the last ${threatName} read${counterName ? ` with ${counterName}` : ""}. The AI noticed.`,
+      };
+    }
+
+    if (lastCounterplay.result === "punished") {
+      return {
+        label: "Counterplay memory",
+        color: "#fca5a5",
+        text: `${threatName} pressure still broke through. The AI will treat that lane as exploitable.`,
+      };
+    }
+
+    return {
+      label: "Counterplay memory",
+      color: "#fbbf24",
+      text: `You stabilized the last ${threatName} push, but the AI has not ruled out that angle yet.`,
+    };
+  }
+
+  _buildForecast(recentAdaptation, primaryWeakness) {
+    const lastCounterplay = this.playerProfile.lastCounterplay;
+    if (recentAdaptation?.forecast) {
+      return this._adjustForecastConfidence(
+        recentAdaptation.forecast,
+        lastCounterplay,
+      );
+    }
+
+    if (recentAdaptation?.bossType) {
+      const bossDef = ENEMY_TYPES[recentAdaptation.bossType];
+      return this._adjustForecastConfidence(
+        this._makeForecast(
+          "Boss schedule",
+          `${bossDef?.name || recentAdaptation.bossType} incoming`,
+          bossDef?.weaknessHint ||
+            recentAdaptation?.message ||
+            "Boss pressure is building and the AI expects a major defense check.",
+          "certain",
+          recentAdaptation.bossType,
+        ),
+        lastCounterplay,
+      );
+    }
+
+    if (recentAdaptation?.strategy) {
+      return this._adjustForecastConfidence(
+        this._makeForecast(
+          "Strategy counter",
+          `${recentAdaptation.strategy.toUpperCase()} counter-pressure likely`,
+          recentAdaptation?.message ||
+            "The AI believes your dominant tower pattern is predictable enough to counter directly.",
+          "high",
+          primaryWeakness || recentAdaptation.strategy,
+        ),
+        lastCounterplay,
+      );
+    }
+
+    const fallbackByWeakness = {
+      stealth: this._makeForecast(
+        "Weakness exploit",
+        "Stealth pressure likely",
+        "Detection remains thin, so ghost probes are still efficient.",
+        "high",
+        "stealth",
+      ),
+      swarm: this._makeForecast(
+        "Weakness exploit",
+        "Mass-unit pressure likely",
+        "Your current build is still vulnerable to crowd saturation.",
+        "high",
+        "swarm",
+      ),
+      fast: this._makeForecast(
+        "Weakness exploit",
+        "High-speed raids likely",
+        "The AI still sees slow response windows in your defense.",
+        "high",
+        "fast",
+      ),
+      armored: this._makeForecast(
+        "Weakness exploit",
+        "Armored columns likely",
+        "Armor remains an efficient way to soak your frontline damage.",
+        "high",
+        "armored",
+      ),
+      spread: this._makeForecast(
+        "Weakness exploit",
+        "Split-pressure formations likely",
+        "Your defense still looks vulnerable to multi-lane stress.",
+        "medium",
+        "spread",
+      ),
+    };
+
+    return this._adjustForecastConfidence(
+      fallbackByWeakness[primaryWeakness] ||
+        this._makeForecast(
+        "Adaptive pressure",
+        "Mixed wave pattern likely",
+        recentAdaptation?.message ||
+          "The AI is still probing for the cleanest line of attack.",
+        "medium",
+        "mixed",
+      ),
+      lastCounterplay,
+    );
+  }
+
+  _adjustForecastConfidence(forecast, lastCounterplay) {
+    if (!forecast) return forecast;
+    if (!lastCounterplay) return forecast;
+    if (!forecast.threat || forecast.threat !== lastCounterplay.threat) {
+      return forecast;
+    }
+
+    const order = ["low", "medium", "high", "certain"];
+    const currentIndex = Math.max(0, order.indexOf(forecast.confidence || "medium"));
+    let nextIndex = currentIndex;
+
+    if (lastCounterplay.result === "countered") {
+      nextIndex = Math.max(0, currentIndex - 1);
+    } else if (lastCounterplay.result === "punished") {
+      nextIndex = Math.min(order.length - 1, currentIndex + 1);
+    }
+
+    if (nextIndex === currentIndex) return forecast;
+
+    return {
+      ...forecast,
+      confidence: order[nextIndex],
+      detail:
+        lastCounterplay.result === "countered"
+          ? `${forecast.detail} Confidence reduced after your last successful answer.`
+          : `${forecast.detail} Confidence increased after the last breach.`,
+    };
+  }
+
+  _buildSuggestion(primaryWeakness, recentAdaptation, runtimeContext) {
+    const towerCounts = runtimeContext.towerCounts || {};
+    const towerCaps = runtimeContext.towerCaps || {};
+    const towerCatCounts = runtimeContext.towerCatCounts || {};
+    const unlockedTowers = runtimeContext.unlockedTowers || [];
+    const gold = runtimeContext.gold || 0;
+    const totalTowers = Object.values(towerCounts).reduce((a, b) => a + b, 0);
+    const totalCap = Object.values(towerCaps).reduce((a, b) => a + b, 0);
+    const atCap = totalCap > 0 && totalTowers >= totalCap;
+    const hasFortifyRoom =
+      typeof runtimeContext.fortifyLevel === "number" &&
+      typeof runtimeContext.maxFortifyLevel === "number" &&
+      runtimeContext.fortifyLevel < runtimeContext.maxFortifyLevel;
+    const canFortify =
+      hasFortifyRoom && gold >= (runtimeContext.fortifyCost || Infinity);
+
+    const threatPlans = {
+      stealth: {
+        counter: "laser",
+        altCounters: [],
+        build: "Add a Laser tower before the next wave or stealth units will slip through.",
+        upgrade:
+          "Tower cap reached. Preserve your Laser coverage and upgrade it before the next wave.",
+        replace:
+          "Tower cap reached and detection is thin. Sell a low-impact tower and replace it with Laser coverage.",
+        fallback:
+          "Stealth pressure is coming. Hold your panic tools for the first breach and rebalance into detection next build window.",
+      },
+      swarm: {
+        counter: "cannon",
+        altCounters: ["vortex", "inferno"],
+        build: "Add Cannon coverage near a choke point to keep swarm pressure under control.",
+        upgrade:
+          "Tower cap reached. Upgrade your splash tower line and concentrate damage at the busiest choke.",
+        replace:
+          "Your anti-swarm answer is thin. Sell a low-impact single-target tower for Cannon or Vortex coverage.",
+        fallback:
+          "Swarm pressure is likely. Save abilities for crowd collapse and avoid spending your last gold on minor upgrades.",
+      },
+      fast: {
+        counter: "freeze",
+        altCounters: ["vortex"],
+        build: "Add Cryo coverage earlier on the path so fast units spend more time under fire.",
+        upgrade:
+          "Tower cap reached. Upgrade your slowing coverage and make sure it triggers earlier on the route.",
+        replace:
+          "Fast raids are likely. Replace a low-value tower with Cryo control or stronger early-path coverage.",
+        fallback:
+          "Speed pressure is coming. Save stun and burst tools for the first rush, then rebalance into control.",
+      },
+      armored: {
+        counter: "sniper",
+        altCounters: ["tesla", "inferno"],
+        build: "Add Sniper or Tesla pressure so armor stops soaking your entire frontline.",
+        upgrade:
+          "Tower cap reached. Upgrade your armor-piercing line instead of widening the build.",
+        replace:
+          "Armor pressure is outpacing your damage. Sell a weak utility tower and pivot into Sniper or Tesla.",
+        fallback:
+          "Armored columns are likely. Prioritize your strongest pierce upgrades and hold burst abilities for the lead units.",
+      },
+      spread: {
+        counter: "cannon",
+        altCounters: ["inferno", "vortex"],
+        build: "Keep some splash coverage online and avoid stacking every tower in one cluster.",
+        upgrade:
+          "Tower cap reached. Strengthen your splash lane and spread your strongest towers across multiple zones.",
+        replace:
+          "Split-pressure formations are likely. Replace a redundant tower in your main cluster with wider area coverage.",
+        fallback:
+          "Multi-angle pressure is likely. Save map-wide abilities and do not overcommit to one corner of the map.",
+      },
+    };
+
+    const plan = threatPlans[primaryWeakness];
+    const bossPlan = this._buildBossSuggestion(recentAdaptation, runtimeContext);
+    if (bossPlan) return bossPlan;
+
+    if (!plan) {
+      return atCap
+        ? "Suggestion: tower cap reached. Upgrade your highest-impact towers and trim anything that is no longer solving a threat."
+        : "Suggestion: diversify tower roles so one counter-wave cannot punish the whole defense.";
+    }
+
+    const counterUnlocked = unlockedTowers.includes(plan.counter);
+    const counterCount = towerCounts[plan.counter] || 0;
+    const altCount = (plan.altCounters || []).reduce(
+      (sum, type) => sum + (towerCounts[type] || 0),
+      0,
+    );
+    const hasRelevantCounter = counterCount > 0 || altCount > 0;
+    const counterDef = TOWER_TYPES[plan.counter];
+    const counterCategory = counterDef?.category;
+    const catLimit =
+      counterCategory && towerCaps[counterCategory] !== undefined
+        ? towerCaps[counterCategory]
+        : null;
+    const catUsed =
+      counterCategory && towerCatCounts[counterCategory] !== undefined
+        ? towerCatCounts[counterCategory]
+        : 0;
+    const categoryFull = catLimit !== null && catUsed >= catLimit;
+    const canAffordCounter = counterDef ? gold >= counterDef.cost : false;
+
+    if (!counterUnlocked) {
+      return `Suggestion: ${primaryWeakness} is a live weakness, but your ideal counter is not unlocked here. Lean on upgrades, abilities, and the best substitute towers you have online.`;
+    }
+
+    if (!atCap && !categoryFull && canAffordCounter) {
+      return plan.build;
+    }
+
+    if (!atCap && !categoryFull && !canAffordCounter) {
+      if (canFortify) {
+        return `${plan.fallback} You cannot afford ${counterDef.name} yet, so a fortify purchase is the cleanest short-term stabilizer.`;
+      }
+      return `${plan.fallback} You cannot afford ${counterDef.name} yet, so preserve gold for a real counter purchase.`;
+    }
+
+    if (hasRelevantCounter) {
+      return plan.upgrade;
+    }
+
+    if (atCap || categoryFull) {
+      return plan.replace;
+    }
+
+    return plan.fallback;
+  }
+
+  _buildBossSuggestion(recentAdaptation, runtimeContext) {
+    const bossType = recentAdaptation?.bossType;
+    if (!bossType) return null;
+
+    const bossDef = ENEMY_TYPES[bossType];
+    if (!bossDef?.weakness) return null;
+
+    const weakness = bossDef.weakness;
+    const weaknessTower = TOWER_TYPES[weakness];
+    const towerCounts = runtimeContext.towerCounts || {};
+    const unlockedTowers = runtimeContext.unlockedTowers || [];
+    const gold = runtimeContext.gold || 0;
+    const totalTowers = Object.values(towerCounts).reduce((a, b) => a + b, 0);
+    const totalCap = Object.values(runtimeContext.towerCaps || {}).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    const atCap = totalCap > 0 && totalTowers >= totalCap;
+    const hasWeaknessCounter = (towerCounts[weakness] || 0) > 0;
+
+    if (!unlockedTowers.includes(weakness)) {
+      return `Suggestion: ${bossDef.name} is approaching, but its best counter is locked on this level. Prepare burst abilities and strengthen your highest-damage lane.`;
+    }
+
+    if (!hasWeaknessCounter && !atCap && weaknessTower && gold >= weaknessTower.cost) {
+      return `Suggestion: ${bossDef.name} is coming. Build ${weaknessTower.name} now to answer its weakness cleanly.`;
+    }
+
+    if (!hasWeaknessCounter && atCap) {
+      return `Suggestion: ${bossDef.name} is coming and you are at tower cap. Sell a low-impact tower and pivot into ${weaknessTower?.name || weakness}.`;
+    }
+
+    if (hasWeaknessCounter) {
+      return `Suggestion: ${bossDef.name} is coming. Strengthen your ${weaknessTower?.name || weakness} line and save abilities for the boss phase.`;
+    }
+
+    return `Suggestion: ${bossDef.name} is approaching. Prepare your strongest lane and keep emergency abilities off cooldown.`;
+  }
+
+  _makeForecast(source, headline, detail, confidence, threat = null) {
+    return {
+      source,
+      headline,
+      detail,
+      confidence,
+      threat,
     };
   }
 }
+

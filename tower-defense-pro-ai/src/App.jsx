@@ -5,6 +5,90 @@ import { CELL_SIZE } from "./gameConstants.js";
 
 const LS_SAVE = "towerDefense_save";
 const LS_SCORES = "towerDefense_highScores";
+const LS_PROFILE = "towerDefense_profile";
+
+function defaultCommanderStats() {
+  return {
+    totalRuns: 0,
+    totalWins: 0,
+    bestWave: 0,
+    bestScore: 0,
+    favoriteTower: null,
+    totalEnemiesDestroyed: 0,
+  };
+}
+
+function normalizePlayerName(name) {
+  return String(name || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 18);
+}
+
+function loadProfile() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_PROFILE) || "null");
+    if (!raw?.name) return null;
+    return {
+      name: normalizePlayerName(raw.name),
+      stats: {
+        ...defaultCommanderStats(),
+        ...(raw.stats || {}),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveProfile(profile) {
+  localStorage.setItem(LS_PROFILE, JSON.stringify(profile));
+}
+
+function getFavoriteTowerFromCounts(towerCounts) {
+  let favoriteTower = null;
+  let topCount = -1;
+
+  for (const [towerType, count] of Object.entries(towerCounts || {})) {
+    if (count > topCount) {
+      favoriteTower = towerType;
+      topCount = count;
+    }
+  }
+
+  return favoriteTower;
+}
+
+function buildUpdatedProfile(profile, gameState) {
+  const base = profile || {
+    name: "Commander",
+    stats: defaultCommanderStats(),
+  };
+  const prevStats = {
+    ...defaultCommanderStats(),
+    ...(base.stats || {}),
+  };
+  const towerCounts = gameState?.aiSummary?.towerCounts || {};
+  const favoriteTower = getFavoriteTowerFromCounts(towerCounts);
+  const enemiesDestroyedThisRun = (gameState?.towers || []).reduce(
+    (sum, tower) => sum + (tower.kills || 0),
+    0,
+  );
+
+  return {
+    ...base,
+    stats: {
+      ...prevStats,
+      totalRuns: prevStats.totalRuns + 1,
+      totalWins: prevStats.totalWins + (gameState?.state === "victory" ? 1 : 0),
+      bestWave: Math.max(prevStats.bestWave, gameState?.wave || 0),
+      bestScore: Math.max(prevStats.bestScore, gameState?.score || 0),
+      favoriteTower: favoriteTower || prevStats.favoriteTower || null,
+      totalEnemiesDestroyed:
+        prevStats.totalEnemiesDestroyed + enemiesDestroyedThisRun,
+    },
+  };
+}
 
 function loadScores() {
   try {
@@ -34,6 +118,8 @@ export default function App() {
   const [inspectedEnemy, setInspectedEnemy] = useState(null);
   const [highScores, setHighScores] = useState(loadScores);
   const [hasSave, setHasSave] = useState(() => !!localStorage.getItem(LS_SAVE));
+  const [playerProfile, setPlayerProfile] = useState(loadProfile);
+  const [profileName, setProfileName] = useState(() => loadProfile()?.name || "");
   const [saveToast, setSaveToast] = useState("");
   const scoreRecordedRef = useRef(false);
 
@@ -64,7 +150,10 @@ export default function App() {
       !scoreRecordedRef.current
     ) {
       scoreRecordedRef.current = true;
+      const nextProfile = buildUpdatedProfile(playerProfile, gameState);
+      saveProfile(nextProfile);
       const updated = addHighScore({
+        playerName: nextProfile?.name || "Commander",
         score: gsScore,
         wave: gsWave,
         levelName: gsLevelName,
@@ -74,6 +163,7 @@ export default function App() {
       });
       // Defer state updates to avoid synchronous setState inside an effect body
       setTimeout(() => {
+        setPlayerProfile(nextProfile);
         setHighScores(updated);
         localStorage.removeItem(LS_SAVE);
         setHasSave(false);
@@ -82,7 +172,7 @@ export default function App() {
     if (gsState === "wave" || gsState === "idle") {
       scoreRecordedRef.current = false;
     }
-  }, [gsState, gsScore, gsWave, gsLevelName, gsLevelId]);
+  }, [gsState, gsScore, gsWave, gsLevelName, gsLevelId, playerProfile, gameState]);
 
   // ── Save / Load ───────────────────────────────────────────────────────────────
   const handleSave = useCallback(() => {
@@ -138,6 +228,24 @@ export default function App() {
     localStorage.removeItem(LS_SCORES);
     setHighScores([]);
   }, []);
+
+  const handleRegisterProfile = useCallback(() => {
+    const normalized = normalizePlayerName(profileName);
+    if (!normalized) {
+      setSaveToast("Enter a commander name first.");
+      setTimeout(() => setSaveToast(""), 2200);
+      return;
+    }
+    const nextProfile = {
+      name: normalized,
+      stats: playerProfile?.stats || defaultCommanderStats(),
+    };
+    saveProfile(nextProfile);
+    setPlayerProfile(nextProfile);
+    setProfileName(normalized);
+    setSaveToast(`Commander registered: ${normalized}`);
+    setTimeout(() => setSaveToast(""), 2200);
+  }, [profileName, playerProfile]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -343,6 +451,96 @@ export default function App() {
         </div>
       )}
 
+      {!playerProfile && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10000,
+            background: "rgba(3, 6, 16, 0.9)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              width: 360,
+              maxWidth: "100%",
+              background: "#0d1117",
+              border: "1px solid #334155",
+              borderRadius: 8,
+              padding: "18px 18px 16px",
+              color: "#e2e8f0",
+              fontFamily: "'Courier New', monospace",
+            }}
+          >
+            <div style={{ fontSize: 12, color: "#38bdf8", marginBottom: 6 }}>
+              COMMANDER REGISTRATION
+            </div>
+            <div
+              style={{
+                fontSize: 18,
+                fontWeight: "bold",
+                color: "#f8fafc",
+                marginBottom: 8,
+              }}
+            >
+              Claim your callsign
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: "#94a3b8",
+                lineHeight: 1.5,
+                marginBottom: 12,
+              }}
+            >
+              Your commander name is stored locally and will be attached to high
+              scores and run history on this machine.
+            </div>
+            <input
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleRegisterProfile();
+              }}
+              placeholder="Commander Nova"
+              maxLength={18}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 6,
+                border: "1px solid #334155",
+                background: "#111827",
+                color: "#e2e8f0",
+                fontFamily: "'Courier New', monospace",
+                fontSize: 12,
+                outline: "none",
+                marginBottom: 12,
+              }}
+            />
+            <button
+              onClick={handleRegisterProfile}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 6,
+                border: "1px solid #38bdf8",
+                background: "#0b2236",
+                color: "#38bdf8",
+                fontFamily: "'Courier New', monospace",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              Register Commander
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Canvas */}
       <div
         style={{
@@ -371,6 +569,7 @@ export default function App() {
       {/* HUD */}
       <HUD
         gameState={{ ...gameState, inspectedEnemy }}
+        playerProfile={playerProfile}
         selectedTower={selectedTower}
         activeTab={activeTab}
         sellMode={sellMode}

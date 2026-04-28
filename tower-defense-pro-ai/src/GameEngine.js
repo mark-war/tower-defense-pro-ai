@@ -1350,6 +1350,10 @@ export class GameEngine {
       damageByTower: { ...this.waveDamageByTower },
       goldSpent: this.waveGoldSpent,
       wave: this.wave,
+      currentTowerCounts: this.towers.reduce((acc, tower) => {
+        acc[tower.type] = (acc[tower.type] || 0) + 1;
+        return acc;
+      }, {}),
     });
     const bonus = ECFG.waveClearBonus + Math.sqrt(this.wave) * 15;
     this.gold += bonus;
@@ -2086,7 +2090,23 @@ export class GameEngine {
       isEndless: this.isEndless,
       enemyCount: this.enemies.length,
       spawnRemaining: this.spawnQueue.length,
-      aiSummary: this.waveAI.getAdaptationSummary(),
+      aiSummary: this.waveAI.getAdaptationSummary({
+        gold: Math.floor(this.gold),
+        towerCounts: Object.fromEntries(
+          Object.entries(
+            this.towers.reduce((acc, tower) => {
+              acc[tower.type] = (acc[tower.type] || 0) + 1;
+              return acc;
+            }, {}),
+          ),
+        ),
+        unlockedTowers: [...lvl.unlockedTowers],
+        towerCaps: { ...lvl.towerCaps },
+        towerCatCounts: { ...this.towerCatCounts },
+        fortifyLevel: this.fortifyLevel,
+        fortifyCost: this.fortifyCost,
+        maxFortifyLevel: ECFG.maxFortifyLevel,
+      }),
       nextWaveMessage: this.nextWaveMessage,
       lastEnemyTypes: this.lastEnemyTypes,
       minRequiredTowers: this.minRequiredTowers,

@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GameEngine } from "./GameEngine.js";
 import { HUD } from "./HUD.jsx";
-import { CELL_SIZE } from "./gameConstants.js";
+import { CELL_SIZE, ACHIEVEMENTS } from "./gameConstants.js";
 
 const LS_SAVE = "towerDefense_save";
 const LS_SCORES = "towerDefense_highScores";
 const LS_PROFILE = "towerDefense_profile";
+const LS_ACHIEVE = "towerDefense_achievements";
+
+const mono = "'Courier New', monospace";
 
 function defaultCommanderStats() {
   return {
@@ -98,6 +101,14 @@ function loadScores() {
   }
 }
 
+function loadAchievements() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_ACHIEVE) || "{}");
+  } catch {
+    return {};
+  }
+}
+
 function addHighScore(entry) {
   const scores = loadScores();
   scores.push(entry);
@@ -117,11 +128,22 @@ export default function App() {
   const [currentLevel, setCurrentLevel] = useState(99);
   const [inspectedEnemy, setInspectedEnemy] = useState(null);
   const [highScores, setHighScores] = useState(loadScores);
+  const [unlockedAchievements, setUnlockedAchievements] =
+    useState(loadAchievements);
   const [hasSave, setHasSave] = useState(() => !!localStorage.getItem(LS_SAVE));
-  const [playerProfile, setPlayerProfile] = useState(loadProfile);
-  const [profileName, setProfileName] = useState(() => loadProfile()?.name || "");
   const [saveToast, setSaveToast] = useState("");
+  const [loadWarning, setLoadWarning] = useState(false);
+  const [achievementToast, setAchievementToast] = useState(null);
+  const [showRunSummary, setShowRunSummary] = useState(false);
+  const [playerProfile, setPlayerProfile] = useState(loadProfile);
+  const [profileName, setProfileName] = useState(
+    () => loadProfile()?.name || "",
+  );
   const scoreRecordedRef = useRef(false);
+  const achievementQueueRef = useRef([]);
+  const toastTimerRef = useRef(null);
+
+  const [showAchievements, setShowAchievements] = useState(false);
 
   // ── Boot ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -136,6 +158,81 @@ export default function App() {
     engineRef.current = engine;
     return () => engine.destroy();
   }, []);
+
+  useEffect(() => {
+    if (!gameState?.state) return;
+    if (gameState.state === "idle" && gameState.wave > 0) {
+      setTimeout(() => setShowAchievements(true), 0);
+    }
+    if (gameState.state === "wave") {
+      setTimeout(() => setShowAchievements(false), 0);
+    }
+  }, [gameState?.state, gameState?.wave]);
+
+  // ── Achievement toast queue ──────────────────────────────────────────────────
+  const isShowingToastRef = useRef(false);
+  const showNextAchievementRef = useRef(null);
+
+  const showNextAchievement = useCallback(() => {
+    if (isShowingToastRef.current) return;
+    if (achievementQueueRef.current.length === 0) return;
+
+    const id = achievementQueueRef.current.shift();
+    const def = ACHIEVEMENTS[id];
+    if (!def) return;
+
+    isShowingToastRef.current = true;
+    setAchievementToast(def);
+
+    toastTimerRef.current = setTimeout(() => {
+      setAchievementToast(null);
+      isShowingToastRef.current = false;
+      setTimeout(() => showNextAchievementRef.current?.(), 300);
+    }, 3500);
+  }, []);
+
+  useEffect(() => {
+    showNextAchievementRef.current = showNextAchievement;
+  }, [showNextAchievement]);
+
+  // ── Watch for new achievements + game end ─────────────────────────────────────
+  useEffect(() => {
+    if (!gameState) return;
+    const st = gameState.state;
+
+    if (gameState.newAchievementId) {
+      const id = gameState.newAchievementId;
+      const stored = loadAchievements();
+      if (!stored[id]) {
+        stored[id] = { unlockedAt: new Date().toISOString() };
+        localStorage.setItem(LS_ACHIEVE, JSON.stringify(stored));
+        achievementQueueRef.current.push(id);
+        setTimeout(() => {
+          setUnlockedAchievements({ ...stored });
+          if (!achievementToast) showNextAchievement();
+        }, 0);
+      }
+    }
+
+    if ((st === "gameover" || st === "victory") && !scoreRecordedRef.current) {
+      scoreRecordedRef.current = true;
+      const updated = addHighScore({
+        score: gameState.score,
+        wave: gameState.wave,
+        levelName: gameState.levelName,
+        levelId: gameState.levelId,
+        won: st === "victory",
+        date: new Date().toLocaleDateString(),
+      });
+      setTimeout(() => {
+        setHighScores(updated);
+        localStorage.removeItem(LS_SAVE);
+        setHasSave(false);
+        setShowRunSummary(true);
+      }, 0);
+    }
+    if (st === "wave" || st === "idle") scoreRecordedRef.current = false;
+  }, [gameState, achievementToast, showNextAchievement]);
 
   // ── High score — record once on game end ──────────────────────────────────────
   const gsState = gameState?.state;
@@ -172,7 +269,15 @@ export default function App() {
     if (gsState === "wave" || gsState === "idle") {
       scoreRecordedRef.current = false;
     }
-  }, [gsState, gsScore, gsWave, gsLevelName, gsLevelId, playerProfile, gameState]);
+  }, [
+    gsState,
+    gsScore,
+    gsWave,
+    gsLevelName,
+    gsLevelId,
+    playerProfile,
+    gameState,
+  ]);
 
   // ── Save / Load ───────────────────────────────────────────────────────────────
   const handleSave = useCallback(() => {
@@ -195,6 +300,13 @@ export default function App() {
     if (!eng) return;
     const raw = localStorage.getItem(LS_SAVE);
     if (!raw) return;
+    const isActive =
+      eng.wave > 0 && !["gameover", "victory"].includes(eng.state);
+    if (isActive && !loadWarning) {
+      setLoadWarning(true);
+      return;
+    }
+    setLoadWarning(false);
     try {
       const save = JSON.parse(raw);
       const ok = eng.loadSaveState(save);
@@ -215,7 +327,28 @@ export default function App() {
       setSaveToast("⚠ Save data corrupt.");
       setTimeout(() => setSaveToast(""), 2500);
     }
-  }, []);
+  }, [loadWarning]); // ← add loadWarning
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e) => {
+      const eng = engineRef.current;
+      if (!eng) return;
+      if (
+        (e.code === "Space" || e.code === "KeyP") &&
+        !["INPUT", "TEXTAREA"].includes(e.target.tagName)
+      ) {
+        e.preventDefault();
+        eng.togglePause();
+      }
+      if (e.code === "KeyS" && e.ctrlKey) {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []); // eslint-disable-line
 
   const handleDeleteSave = useCallback(() => {
     localStorage.removeItem(LS_SAVE);
@@ -442,7 +575,7 @@ export default function App() {
             borderRadius: 6,
             padding: "8px 18px",
             color: "#e2e8f0",
-            fontFamily: "'Courier New', monospace",
+            fontFamily: mono,
             fontSize: 13,
             pointerEvents: "none",
           }}
@@ -473,7 +606,7 @@ export default function App() {
               borderRadius: 8,
               padding: "18px 18px 16px",
               color: "#e2e8f0",
-              fontFamily: "'Courier New', monospace",
+              fontFamily: mono,
             }}
           >
             <div style={{ fontSize: 12, color: "#38bdf8", marginBottom: 6 }}>
@@ -515,7 +648,7 @@ export default function App() {
                 border: "1px solid #334155",
                 background: "#111827",
                 color: "#e2e8f0",
-                fontFamily: "'Courier New', monospace",
+                fontFamily: mono,
                 fontSize: 12,
                 outline: "none",
                 marginBottom: 12,
@@ -530,7 +663,7 @@ export default function App() {
                 border: "1px solid #38bdf8",
                 background: "#0b2236",
                 color: "#38bdf8",
-                fontFamily: "'Courier New', monospace",
+                fontFamily: mono,
                 fontSize: 12,
                 cursor: "pointer",
               }}
@@ -539,6 +672,139 @@ export default function App() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* ── Achievement toast ──────────────────────────────────────────────── */}
+      {achievementToast && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 9999,
+            background: "#1a1a0a",
+            border: "2px solid #fbbf24",
+            borderRadius: 8,
+            padding: "12px 20px",
+            color: "#e2e8f0",
+            fontFamily: mono,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            boxShadow: "0 0 30px rgba(251,191,36,0.3)",
+            pointerEvents: "none",
+            minWidth: 260,
+          }}
+        >
+          <span style={{ fontSize: 28 }}>{achievementToast.icon}</span>
+          <div>
+            <div
+              style={{
+                fontSize: 10,
+                color: "#fbbf24",
+                letterSpacing: "0.1em",
+                marginBottom: 2,
+              }}
+            >
+              🏆 ACHIEVEMENT UNLOCKED
+            </div>
+            <div style={{ fontSize: 13, fontWeight: "bold" }}>
+              {achievementToast.name}
+            </div>
+            <div style={{ fontSize: 10, color: "#94a3b8" }}>
+              {achievementToast.desc}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Load warning dialog ────────────────────────────────────────────── */}
+      {loadWarning && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.80)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            style={{
+              background: "#0d1117",
+              border: "2px solid #ef4444",
+              borderRadius: 8,
+              padding: "24px 28px",
+              maxWidth: 320,
+              fontFamily: mono,
+              textAlign: "center",
+            }}
+          >
+            <div style={{ fontSize: 28, marginBottom: 10 }}>⚠️</div>
+            <div
+              style={{
+                fontSize: 13,
+                color: "#fca5a5",
+                lineHeight: 1.7,
+                marginBottom: 16,
+              }}
+            >
+              Loading will <strong>discard your current run</strong>.<br />
+              Wave {gameState?.wave} progress will be lost.
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+              <button
+                onClick={handleLoad}
+                style={{
+                  padding: "8px 18px",
+                  background: "#3a1a1a",
+                  border: "1px solid #ef4444",
+                  borderRadius: 5,
+                  color: "#ef4444",
+                  fontFamily: mono,
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                Yes, load anyway
+              </button>
+              <button
+                onClick={() => setLoadWarning(false)}
+                style={{
+                  padding: "8px 18px",
+                  background: "#1e293b",
+                  border: "1px solid #475569",
+                  borderRadius: 5,
+                  color: "#94a3b8",
+                  fontFamily: mono,
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Run Summary Modal ──────────────────────────────────────────────── */}
+      {showRunSummary && gameState && (
+        <RunSummaryModal
+          gameState={gameState}
+          highScores={highScores}
+          onPlayAgain={() => {
+            setShowRunSummary(false);
+            handleReset(gameState.levelId);
+          }}
+          onLevels={() => {
+            setShowRunSummary(false);
+            setActiveTab("levels");
+          }}
+        />
       )}
 
       {/* Canvas */}
@@ -575,6 +841,7 @@ export default function App() {
         sellMode={sellMode}
         hasSave={hasSave}
         highScores={highScores}
+        unlockedAchievements={unlockedAchievements}
         onSelectTower={handleSelectTower}
         onSellMode={handleSellMode}
         onStartWave={handleStartWave}
@@ -591,7 +858,273 @@ export default function App() {
         onLoad={handleLoad}
         onDeleteSave={handleDeleteSave}
         onClearScores={handleClearScores}
+        showAchievements={showAchievements}
+        onToggleAchievements={() => setShowAchievements((s) => !s)}
       />
+    </div>
+  );
+}
+
+// ─── Run Summary Modal ────────────────────────────────────────────────────────
+function RunSummaryModal({ gameState, highScores, onPlayAgain, onLevels }) {
+  const mono = "'Courier New', monospace";
+  const won = gameState.state === "victory";
+  const isNewRecord =
+    highScores[0]?.score === gameState.score &&
+    highScores[0]?.wave === gameState.wave;
+
+  const bestTower = [...(gameState.towers || [])].sort(
+    (a, b) => b.kills - a.kills,
+  )[0];
+
+  const runAchievements = gameState.runAchievements || [];
+
+  const statRow = (label, val, color = "#e2e8f0") => (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        marginBottom: 5,
+        fontSize: 11,
+      }}
+    >
+      <span style={{ color: "#64748b" }}>{label}</span>
+      <span style={{ color, fontWeight: "bold" }}>{val}</span>
+    </div>
+  );
+
+  const modifierNames = [...new Set(gameState.runStats?.modifiersFaced || [])];
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.88)",
+        zIndex: 8000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: mono,
+      }}
+    >
+      <div
+        style={{
+          background: "#0d1117",
+          border: `2px solid ${won ? "#4ade80" : "#ef4444"}`,
+          borderRadius: 10,
+          padding: "24px 28px",
+          width: 380,
+          maxHeight: "90vh",
+          overflowY: "auto",
+        }}
+      >
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: 18 }}>
+          <div style={{ fontSize: 36, marginBottom: 4 }}>
+            {won ? "🏆" : "💀"}
+          </div>
+          <div
+            style={{
+              fontSize: 24,
+              fontWeight: "bold",
+              color: won ? "#4ade80" : "#ef4444",
+            }}
+          >
+            {won ? "VICTORY!" : "GAME OVER"}
+          </div>
+          <div style={{ fontSize: 11, color: "#475569", marginTop: 3 }}>
+            {gameState.levelName} · Wave {gameState.wave}
+            {gameState.totalWaves !== "∞" ? `/${gameState.totalWaves}` : ""}
+          </div>
+          <div
+            style={{
+              fontSize: 22,
+              fontWeight: "bold",
+              color: "#facc15",
+              marginTop: 8,
+            }}
+          >
+            {gameState.score.toLocaleString()}
+            {isNewRecord && (
+              <span style={{ fontSize: 11, color: "#fbbf24", marginLeft: 8 }}>
+                🏆 NEW RECORD!
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div
+          style={{
+            background: "#111827",
+            borderRadius: 6,
+            padding: "10px 14px",
+            marginBottom: 12,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 9,
+              color: "#475569",
+              letterSpacing: "0.1em",
+              marginBottom: 8,
+            }}
+          >
+            RUN STATISTICS
+          </div>
+          {statRow(
+            "Enemies killed",
+            (gameState.runStats?.totalKills || 0).toLocaleString(),
+            "#4ade80",
+          )}
+          {statRow(
+            "Enemies leaked",
+            gameState.runStats?.totalLeaks || 0,
+            gameState.runStats?.totalLeaks > 0 ? "#f97316" : "#4ade80",
+          )}
+          {statRow(
+            "Bosses killed",
+            gameState.runStats?.bossKills || 0,
+            "#fbbf24",
+          )}
+          {statRow(
+            "Mutated bosses killed",
+            gameState.runStats?.mutatedBossKills || 0,
+            "#a78bfa",
+          )}
+          {statRow(
+            "Lives remaining",
+            gameState.lives,
+            gameState.lives > 0 ? "#4ade80" : "#ef4444",
+          )}
+          {statRow("Modifiers survived", modifierNames.length, "#818cf8")}
+          {statRow(
+            "Flawless waves",
+            gameState.runStats?.wavesNoLeak || 0,
+            "#38bdf8",
+          )}
+          {bestTower &&
+            statRow(
+              "Best tower",
+              `${bestTower.type} (${bestTower.kills} kills)`,
+              "#e879f9",
+            )}
+        </div>
+
+        {/* Modifiers faced */}
+        {modifierNames.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div
+              style={{
+                fontSize: 9,
+                color: "#475569",
+                letterSpacing: "0.1em",
+                marginBottom: 5,
+              }}
+            >
+              MODIFIERS SURVIVED
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {modifierNames.map((id) => {
+                const { WAVE_MODIFIERS: WM } = { WAVE_MODIFIERS: [] };
+                return (
+                  <span
+                    key={id}
+                    style={{
+                      fontSize: 9,
+                      padding: "2px 7px",
+                      background: "#1e293b",
+                      color: "#94a3b8",
+                      borderRadius: 4,
+                      border: "1px solid #334155",
+                    }}
+                  >
+                    {id.replace(/_/g, " ")}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Achievements this run */}
+        {runAchievements.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div
+              style={{
+                fontSize: 9,
+                color: "#fbbf24",
+                letterSpacing: "0.1em",
+                marginBottom: 6,
+              }}
+            >
+              ACHIEVEMENTS THIS RUN
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {runAchievements.map((id) => {
+                const def = ACHIEVEMENTS[id];
+                if (!def) return null;
+                return (
+                  <div
+                    key={id}
+                    style={{
+                      fontSize: 9,
+                      padding: "3px 7px",
+                      background: "#1a1a0a",
+                      border: "1px solid #fbbf24",
+                      borderRadius: 5,
+                      color: "#fde68a",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <span>{def.icon}</span> {def.name}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Buttons */}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={onPlayAgain}
+            style={{
+              flex: 2,
+              padding: "10px",
+              background: won ? "#0f2a0f" : "#2a0f0f",
+              border: `1px solid ${won ? "#4ade80" : "#ef4444"}`,
+              borderRadius: 6,
+              color: won ? "#4ade80" : "#ef4444",
+              fontFamily: mono,
+              fontSize: 12,
+              fontWeight: "bold",
+              cursor: "pointer",
+            }}
+          >
+            ↺ PLAY AGAIN
+          </button>
+          <button
+            onClick={onLevels}
+            style={{
+              flex: 1,
+              padding: "10px",
+              background: "#111827",
+              border: "1px solid #475569",
+              borderRadius: 6,
+              color: "#94a3b8",
+              fontFamily: mono,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            🗺️ LEVELS
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

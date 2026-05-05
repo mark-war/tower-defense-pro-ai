@@ -12,6 +12,9 @@ import {
   SYNERGIES,
   ADMIN_CONFIG,
   STEALTH_COUNTERS,
+  WAVE_MODIFIERS,
+  BOSS_MUTATIONS,
+  ACHIEVEMENTS,
 } from "./gameConstants.js";
 import { WaveAI } from "./WaveAI.js";
 import { Kingdom } from "./Kingdom.js";
@@ -117,6 +120,21 @@ export class GameEngine {
     this._streakWindow = 0;
 
     this.paused = false;
+
+    this.activeModifier = null;
+    this.silencedTowerType = null;
+    this.runStats = {
+      totalKills: 0,
+      totalLeaks: 0,
+      goldEarned: this.gold,
+      bossKills: 0,
+      mutatedBossKills: 0,
+      modifiersFaced: [],
+      maxGoldAtOnce: 0,
+      wavesNoLeak: 0,
+    };
+    this._runAchievements = []; // unlocked this run
+    this._newAchievementId = null; // triggers toast
   }
 
   _setupCanvas() {
@@ -568,7 +586,7 @@ export class GameEngine {
     if (this.state !== "idle") return;
     this.wave++;
 
-    // Endless: rotate map every 10 waves
+    // ── Endless map rotation ──────────────────────────────────────────────────
     if (this.isEndless && this.wave % 10 === 0 && this.wave > 0) {
       const mapKeys = Object.keys(MAPS);
       const newMap = MAPS[mapKeys[(this.wave / 10) % mapKeys.length]];
@@ -576,11 +594,9 @@ export class GameEngine {
         this.mapDef = newMap;
         this.path = this._buildPath(newMap.waypoints);
         this.pathCells = this._buildPathCells(newMap.waypoints);
-
         const lastPt = this.path[this.path.length - 1];
         this.kingdom = new Kingdom(lastPt.x, lastPt.y);
         this.spawnCamps = [new SpawnCamp(this.path[0].x, this.path[0].y, 0)];
-
         this._addFloatingText(
           this.canvas.width / 2,
           this.canvas.height / 2 - 20,
@@ -590,12 +606,38 @@ export class GameEngine {
       }
     }
 
+    // ── Roll wave modifier every 10 waves ────────────────────────────────────
+    this.activeModifier = null;
+    this.silencedTowerType = null;
+    if (this.wave % 10 === 0) {
+      this.activeModifier =
+        WAVE_MODIFIERS[Math.floor(Math.random() * WAVE_MODIFIERS.length)];
+      this.runStats.modifiersFaced.push(this.activeModifier.id);
+
+      if (this.activeModifier.apply?.silenceRandom) {
+        const silenceable = this.levelConfig.unlockedTowers.filter(
+          (t) => t !== "laser", // never silence laser (stealth would be unbeatable)
+        );
+        this.silencedTowerType =
+          silenceable[Math.floor(Math.random() * silenceable.length)];
+      }
+    }
+
+    // ── Boss check + warning ──────────────────────────────────────────────────
     const bossType = this.isEndless
       ? this.waveAI._endlessBossForWave(this.wave)
       : this.levelConfig.bossWaves?.[this.wave] || null;
 
+    // Roll boss mutation (wave 30+)
+    this._pendingBossMutation = null;
+    if (bossType && ENEMY_TYPES[bossType] && this.wave >= 30) {
+      this._pendingBossMutation =
+        BOSS_MUTATIONS[Math.floor(Math.random() * BOSS_MUTATIONS.length)];
+    }
+
     if (bossType && ENEMY_TYPES[bossType]) {
       this.bossWarningType = bossType;
+      this.bossWarningMutation = this._pendingBossMutation;
       this.bossWarningTimer = VCFG.bossWarningFrames;
     }
 
@@ -604,7 +646,27 @@ export class GameEngine {
       this.levelConfig.waves,
       this.levelConfig,
     );
+
+    this._eliteSpawnedCount = 0;
     this.spawnQueue = [...waveData.enemies];
+
+    // Apply double-time modifier (duplicate spawn queue with delay offset)
+    if (this.activeModifier?.apply?.enemyCountMult) {
+      const mult = Math.floor(this.activeModifier.apply.enemyCountMult);
+      const original = [...this.spawnQueue];
+      for (let i = 1; i < mult; i++) {
+        const lastDelay = original[original.length - 1]?.spawnDelay || 0;
+        const offset = lastDelay + 120;
+        this.spawnQueue.push(
+          ...original.map((e) => ({
+            ...e,
+            spawnDelay: e.spawnDelay + offset * i,
+          })),
+        );
+      }
+      this.spawnQueue.sort((a, b) => a.spawnDelay - b.spawnDelay);
+    }
+
     this.spawnTimer = 0;
     this.waveKills = 0;
     this.waveLeaks = 0;
@@ -666,6 +728,72 @@ export class GameEngine {
       assistTowers: new Set(),
       stunImmunity: 0,
     };
+    // ── Apply wave modifier to this enemy ─────────────────────────────────────
+    if (this.activeModifier) {
+      const mod = this.activeModifier.apply;
+      if (mod.enemyArmorBonus)
+        e.armor = Math.min(0.92, e.armor + mod.enemyArmorBonus);
+      if (mod.enemySpeedMult) {
+        e.speed *= 1 + mod.enemySpeedMult;
+        e.baseSpeed = e.speed;
+      }
+      if (mod.allStealth) e.stealth = true;
+      if (mod.enemyRewardMult)
+        e.reward = Math.round(e.reward * mod.enemyRewardMult);
+      if (mod.enemyArmorMelt)
+        e.armor = Math.max(0, e.armor - mod.enemyArmorMelt);
+      if (mod.immuneStunSlow) e.immunities.push("freeze");
+    }
+
+    // ── Apply elite modifier (first N spawned enemies become elites) ──────────
+    if (
+      this.activeModifier?.apply?.eliteCount &&
+      this._eliteSpawnedCount < this.activeModifier.apply.eliteCount &&
+      !e.isBoss
+    ) {
+      e.hp *= this.activeModifier.apply.eliteHpMult;
+      e.maxHp = e.hp;
+      e.reward = Math.round(
+        e.reward * this.activeModifier.apply.eliteRewardMult,
+      );
+      e.isElite = true;
+      e.size *= 1.4;
+      this._eliteSpawnedCount++;
+    }
+
+    // ── Apply boss mutation ───────────────────────────────────────────────────
+    if (e.isBoss && this._pendingBossMutation) {
+      const mut = this._pendingBossMutation;
+      e.mutation = mut;
+      if (mut.apply.armorBonus)
+        e.armor = Math.min(0.92, e.armor + mut.apply.armorBonus);
+      if (mut.apply.speedMult) {
+        e.speed *= mut.apply.speedMult;
+        e.baseSpeed = e.speed;
+      }
+      if (mut.apply.hpMult) {
+        e.hp *= mut.apply.hpMult;
+        e.maxHp = e.hp;
+      }
+      if (mut.apply.immuneStunSlow) {
+        e.immunities.push("freeze");
+        e.stunImmunity = 999999;
+      }
+      // twin/stealth/regen handled in _updateEnemies
+    }
+
+    // ── Empowered boss loot override ──────────────────────────────────────────
+    if (e.isBoss && this.activeModifier?.apply?.bossHpMult) {
+      e.hp *= this.activeModifier.apply.bossHpMult;
+      e.maxHp = e.hp;
+      if (this.activeModifier.apply.bossLegendaryLoot) {
+        e.lootDrop = {
+          type: "gold_shower",
+          amount: 300,
+          label: "👑 Empowered Boss Drop!",
+        };
+      }
+    }
     this.enemies.push(e);
   }
 
@@ -722,6 +850,65 @@ export class GameEngine {
             continue;
           }
         }
+      }
+
+      // ── Boss mutation: regen ─────────────────────────────────────────────
+      if (
+        e.mutation?.apply?.regenRate &&
+        this.tick % 60 === 0 &&
+        e.hp < e.maxHp
+      ) {
+        e.hp = Math.min(e.maxHp, e.hp + e.maxHp * e.mutation.apply.regenRate);
+      }
+
+      // ── Wave modifier: enemy regen ───────────────────────────────────────
+      if (
+        this.activeModifier?.apply?.enemyRegenRate &&
+        this.tick % 60 === 0 &&
+        e.hp < e.maxHp
+      ) {
+        e.hp = Math.min(
+          e.maxHp,
+          e.hp + e.maxHp * this.activeModifier.apply.enemyRegenRate,
+        );
+      }
+
+      // ── Boss mutation: phase cloak (stealth below HP threshold) ──────────
+      if (
+        e.mutation?.apply?.stealthBelowHp &&
+        !e.stealth &&
+        e.hp / e.maxHp <= e.mutation.apply.stealthBelowHp
+      ) {
+        e.stealth = true;
+        this._addFloatingText(e.x, e.y - 30, "👻 PHASE CLOAK!", "#a78bfa");
+        this._addParticles(e.x, e.y, "#a78bfa", 20);
+      }
+
+      // ── Boss mutation: twin spawn ────────────────────────────────────────
+      if (
+        e.isBoss &&
+        e.mutation?.apply?.twinAt &&
+        !e.twinSpawned &&
+        e.hp / e.maxHp <= e.mutation.apply.twinAt
+      ) {
+        e.twinSpawned = true;
+        const twin = {
+          ...e,
+          id: Date.now() + Math.random(),
+          hp: e.maxHp * (e.mutation.apply.twinHpFraction || 0.6),
+          maxHp: e.maxHp * (e.mutation.apply.twinHpFraction || 0.6),
+          twinSpawned: true,
+          mutation: null,
+          x: e.x + 15,
+          y: e.y + 15,
+          slowTimer: 0,
+          stunTimer: 0,
+          burnTimer: 0,
+          assistTowers: new Set(),
+        };
+        this.enemies.push(twin);
+        this._addFloatingText(e.x, e.y - 36, "👥 TWIN SPAWN!", "#ef4444");
+        this._addParticles(e.x, e.y, "#ef4444", 30);
       }
 
       // Boss spawn-on-damage timer
@@ -849,6 +1036,13 @@ export class GameEngine {
     const damageMult =
       (this.globalBuff.timer > 0 ? this.globalBuff.damageMult : 1) *
       (this.lastStandActive ? 1.5 : 1);
+    // Wave modifier multipliers
+    const modFireRateMult = this.activeModifier?.apply?.towerFireRateMult
+      ? 1 - this.activeModifier.apply.towerFireRateMult // e.g. 0.45 faster = mult 0.55
+      : 1;
+    const modRangeMult = this.activeModifier?.apply?.towerRangeMult
+      ? 1 + this.activeModifier.apply.towerRangeMult // e.g. -0.35 = mult 0.65
+      : 1;
     for (const ab of Object.values(this.abilities))
       if (ab.cooldownLeft > 0) ab.cooldownLeft--;
     // Decay bolt effects each tick
@@ -861,6 +1055,8 @@ export class GameEngine {
     );
 
     for (const tower of this.towers) {
+      // Silenced tower check
+      if (tower.type === this.silencedTowerType) continue;
       if (tower.cooldown > 0) {
         tower.cooldown--;
         continue;
@@ -874,13 +1070,16 @@ export class GameEngine {
             if (e.immunities.includes("tesla")) return false;
             return (
               Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2) <=
-              tower.range
+              tower.range * modRangeMult
             );
           })
           .sort((a, b) => b.distanceTraveled - a.distanceTraveled)
           .slice(0, (tower.chainTargets || 3) + 1);
         if (inRange.length === 0) continue;
-        tower.cooldown = Math.max(1, Math.round(tower.fireRate * fireRateMult));
+        tower.cooldown = Math.max(
+          1,
+          Math.round(tower.fireRate * fireRateMult * modFireRateMult),
+        );
         const dmg = tower.damage * damageMult;
         inRange.forEach((e, idx) => {
           const chainDmg = idx === 0 ? dmg : dmg * 0.7;
@@ -913,14 +1112,17 @@ export class GameEngine {
         if (enemy.immunities.includes(tower.type)) continue;
         const dx = enemy.x - tower.x,
           dy = enemy.y - tower.y;
-        if (Math.sqrt(dx * dx + dy * dy) <= tower.range) {
+        if (Math.sqrt(dx * dx + dy * dy) <= tower.range * modRangeMult) {
           if (!target || enemy.distanceTraveled > target.distanceTraveled)
             target = enemy;
         }
       }
       if (!target) continue;
       this._fireProjectile(tower, target, damageMult);
-      tower.cooldown = Math.max(1, Math.round(tower.fireRate * fireRateMult));
+      tower.cooldown = Math.max(
+        1,
+        Math.round(tower.fireRate * fireRateMult * modFireRateMult),
+      );
     }
   }
 
@@ -1204,6 +1406,20 @@ export class GameEngine {
     this.score += Math.floor(enemy.reward * this.wave * (enemy.isBoss ? 5 : 1));
     this.waveKills++;
 
+    this.runStats.totalKills++;
+    this.runStats.maxGoldAtOnce = Math.max(
+      this.runStats.maxGoldAtOnce,
+      this.gold + enemy.reward,
+    );
+    if (enemy.isBoss) {
+      this.runStats.bossKills++;
+      if (enemy.mutation) {
+        this.runStats.mutatedBossKills++;
+        this._unlockAchievement("mutation_slayer");
+      }
+      this._unlockAchievement("boss_slayer");
+    }
+
     if (enemy.isBoss) {
       this.waveAI.recordBossResult(enemy.type, true, towerType);
       this._triggerBossLoot(enemy);
@@ -1339,8 +1555,8 @@ export class GameEngine {
     if (this.state !== "wave") return;
     if (this.spawnQueue.length > 0 || this.enemies.length > 0) return;
 
-    // Wave-end XP pass — role-based, wave-normalized
-    const waveXpBudget = 80 + this.wave * 4; // total XP pool grows with wave
+    // Wave-end XP pass
+    const waveXpBudget = 80 + this.wave * 4;
     this._grantWaveEndXp(waveXpBudget);
 
     this.state = "idle";
@@ -1350,28 +1566,66 @@ export class GameEngine {
       damageByTower: { ...this.waveDamageByTower },
       goldSpent: this.waveGoldSpent,
       wave: this.wave,
-      currentTowerCounts: this.towers.reduce((acc, tower) => {
-        acc[tower.type] = (acc[tower.type] || 0) + 1;
-        return acc;
-      }, {}),
     });
+
+    // Run stats
+    this.runStats.totalLeaks += this.waveLeaks;
+    if (this.waveLeaks === 0) {
+      this.runStats.wavesNoLeak = (this.runStats.wavesNoLeak || 0) + 1;
+      this._unlockAchievement("no_leak");
+    }
+
+    // Clear modifier
+    this.activeModifier = null;
+    this.silencedTowerType = null;
+    this._eliteSpawnedCount = 0;
+
     const bonus = ECFG.waveClearBonus + Math.sqrt(this.wave) * 15;
     this.gold += bonus;
+    this.runStats.goldEarned = (this.runStats.goldEarned || 0) + bonus;
     this._addFloatingText(
       this.canvas.width / 2,
       this.canvas.height / 2,
-      `Wave ${this.wave} Clear! +${bonus}g`,
+      `Wave ${this.wave} Clear! +${Math.floor(bonus)}g`,
       "#4ade80",
     );
     this.minRequiredTowers = this.waveAI.calcMinimumRequiredTowers(
       this.wave + 1,
       this.levelConfig,
     );
+
+    // Check achievements
+    this._checkAchievements();
+
     if (!this.isEndless && this.wave >= this.levelConfig.waves) {
       this.state = "victory";
       this.waveAI.finalizeGame(true);
+      if (this.lives === this.levelConfig.startLives)
+        this._unlockAchievement("perfect_run");
     }
     this._emitState();
+  }
+
+  _unlockAchievement(id) {
+    if (!ACHIEVEMENTS[id]) return;
+    if (this._runAchievements.includes(id)) return;
+    this._runAchievements.push(id);
+    this._newAchievementId = id;
+    this._emitState();
+    // Clear the new-achievement signal after a beat so it doesn't retrigger
+    setTimeout(() => {
+      this._newAchievementId = null;
+    }, 100);
+  }
+
+  _checkAchievements() {
+    if (this.wave >= 1) this._unlockAchievement("first_wave");
+    if (this.wave >= 25) this._unlockAchievement("wave_25");
+    if (this.wave >= 50) this._unlockAchievement("wave_50");
+    if (this.activeModifier || this.runStats.modifiersFaced.length > 0)
+      this._unlockAchievement("modifier_survive");
+    if (this.gold >= 2000) this._unlockAchievement("gold_hoarder");
+    if (this.activeSynergies.length >= 3) this._unlockAchievement("synergist");
   }
 
   _grantWaveEndXp(budget) {
@@ -1542,6 +1796,53 @@ export class GameEngine {
       ctx.strokeStyle = `rgba(239,68,68,${alpha})`;
       ctx.lineWidth = 8;
       ctx.strokeRect(4, 4, W - 8, H - 8);
+    }
+
+    // ── Wave modifier banner ──────────────────────────────────────────────────
+    if (this.activeModifier) {
+      const mod = this.activeModifier;
+      const typeColor =
+        mod.type === "buff"
+          ? "#4ade80"
+          : mod.type === "debuff"
+            ? "#ef4444"
+            : "#818cf8";
+      ctx.fillStyle =
+        mod.type === "buff"
+          ? "rgba(74,222,128,0.12)"
+          : mod.type === "debuff"
+            ? "rgba(239,68,68,0.12)"
+            : "rgba(129,140,248,0.12)";
+      ctx.fillRect(0, 0, W, 30);
+      ctx.fillStyle = typeColor;
+      ctx.font = "bold 11px monospace";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`${mod.icon} ${mod.name.toUpperCase()}: ${mod.desc}`, 8, 15);
+      if (this.silencedTowerType) {
+        const tDef = TOWER_TYPES[this.silencedTowerType];
+        ctx.fillStyle = "#ef4444";
+        ctx.textAlign = "right";
+        ctx.fillText(
+          `🔇 ${tDef?.name || this.silencedTowerType} SILENCED`,
+          W - 8,
+          15,
+        );
+      }
+      ctx.textBaseline = "alphabetic";
+    }
+
+    // ── Streak display ────────────────────────────────────────────────────────
+    if (this._streakCount >= 5) {
+      const alpha = Math.min(1, this._streakTimer / 30);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "#fbbf24";
+      ctx.font = `bold ${14 + Math.min(this._streakCount, 20)}px monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`🔥 ${this._streakCount} STREAK!`, W / 2, H / 2 - 60);
+      ctx.globalAlpha = 1;
+      ctx.textBaseline = "alphabetic";
     }
 
     // ── Global buff banner ────────────────────────────────────────────────────
@@ -1798,6 +2099,41 @@ export class GameEngine {
         ctx.fillText("⚠ LASER", enemy.x, enemy.y - enemy.size - 14);
       }
 
+      // Elite indicator ring
+      if (enemy.isElite) {
+        ctx.save();
+        ctx.strokeStyle = "#facc15";
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = "#facc15";
+        ctx.shadowBlur = 10;
+        const t = this.tick * 0.15;
+        ctx.beginPath();
+        ctx.arc(
+          enemy.x,
+          enemy.y,
+          enemy.size + 5 + Math.sin(t) * 2,
+          0,
+          Math.PI * 2,
+        );
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+      }
+
+      // Mutation indicator on boss
+      if (enemy.isBoss && enemy.mutation) {
+        ctx.fillStyle = "#fbbf24";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(
+          `${enemy.mutation.icon} ${enemy.mutation.name}`,
+          enemy.x,
+          enemy.y - enemy.size - 18,
+        );
+        ctx.textBaseline = "alphabetic";
+      }
+
       // HP bar
       const bw = enemy.isBoss ? enemy.size * 3.8 : enemy.size * 2.6;
       const bh = enemy.isBoss ? 5 : 3;
@@ -1900,6 +2236,15 @@ export class GameEngine {
         W / 2,
         H / 2 + 6,
       );
+      if (this.bossWarningMutation) {
+        ctx.fillStyle = "#fbbf24";
+        ctx.font = "bold 11px monospace";
+        ctx.fillText(
+          `🧬 MUTATION: ${this.bossWarningMutation.icon} ${this.bossWarningMutation.name} — ${this.bossWarningMutation.desc}`,
+          W / 2,
+          H / 2 + 42,
+        );
+      }
       if (bDef?.immunities?.length) {
         ctx.fillStyle = "#f87171";
         ctx.font = "10px monospace";
@@ -2084,6 +2429,11 @@ export class GameEngine {
       score: this.score,
       state: this.state,
       paused: this.paused,
+      activeModifier: this.activeModifier,
+      silencedTowerType: this.silencedTowerType,
+      runStats: { ...this.runStats },
+      runAchievements: [...(this._runAchievements || [])],
+      newAchievementId: this._newAchievementId || null,
       levelId: this.levelId,
       levelName: lvl.name,
       mapName: this.mapDef.name,

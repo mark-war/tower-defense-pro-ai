@@ -10,6 +10,7 @@ import {
   ADMIN_CONFIG,
   ABILITIES,
   SYNERGIES,
+  ACHIEVEMENTS,
 } from "./gameConstants.js";
 import { getGlobalMemory } from "./WaveAI.js";
 
@@ -34,11 +35,14 @@ export function HUD({
   onTowerCellClick,
   onClearEnemyInspect,
   onFortify,
+  unlockedAchievements = {},
   onPause,
   onSave,
   onLoad,
   onDeleteSave,
   onClearScores,
+  showAchievements,
+  onToggleAchievements,
 }) {
   const [confirmLevel, setConfirmLevel] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -89,6 +93,7 @@ export function HUD({
     fortifyLevel = 0,
     fortifyCost = 150,
     maxFortifyLevel = 20,
+    activeModifier = null,
   } = gameState;
 
   const aiReport = aiSummary?.report;
@@ -464,8 +469,7 @@ export function HUD({
           <div
             style={{
               fontSize: 9,
-              color:
-                debriefStatusColor[aiReport.lastWave.status] || "#a78bfa",
+              color: debriefStatusColor[aiReport.lastWave.status] || "#a78bfa",
               letterSpacing: "0.08em",
               marginBottom: 6,
               display: "flex",
@@ -480,7 +484,8 @@ export function HUD({
                 padding: "2px 6px",
                 borderRadius: 4,
                 border: `1px solid ${debriefStatusColor[aiReport.lastWave.status] || "#475569"}`,
-                color: debriefStatusColor[aiReport.lastWave.status] || "#94a3b8",
+                color:
+                  debriefStatusColor[aiReport.lastWave.status] || "#94a3b8",
                 background: "#111827",
                 textTransform: "uppercase",
               }}
@@ -1273,6 +1278,57 @@ export function HUD({
             {nextWaveMessage}
           </div>
 
+          {/* Active or upcoming modifier */}
+          {activeModifier && (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: "7px 10px",
+                borderRadius: 5,
+                background:
+                  activeModifier.type === "buff"
+                    ? "#0a200a"
+                    : activeModifier.type === "debuff"
+                      ? "#200a0a"
+                      : "#10102a",
+                border: `1px solid ${activeModifier.type === "buff" ? "#4ade80" : activeModifier.type === "debuff" ? "#ef4444" : "#818cf8"}`,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 9,
+                  color: "#475569",
+                  marginBottom: 3,
+                  letterSpacing: "0.08em",
+                }}
+              >
+                ⚡ ACTIVE WAVE MODIFIER
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 20 }}>{activeModifier.icon}</span>
+                <div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "bold",
+                      color:
+                        activeModifier.type === "buff"
+                          ? "#4ade80"
+                          : activeModifier.type === "debuff"
+                            ? "#ef4444"
+                            : "#818cf8",
+                    }}
+                  >
+                    {activeModifier.name}
+                  </div>
+                  <div style={{ fontSize: 9, color: "#6b7280" }}>
+                    {activeModifier.desc}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* DETECTED STRATEGY */}
           <Sect label="DETECTED STRATEGY">
             <div
@@ -1438,31 +1494,37 @@ export function HUD({
                     gap: "6px 10px",
                   }}
                 >
-                {[
-                  ["Runs", commanderStats.totalRuns, "#93c5fd"],
-                  ["Wins", commanderStats.totalWins, "#86efac"],
-                  ["Best Wave", commanderStats.bestWave, "#fbbf24"],
-                  ["Best Score", commanderStats.bestScore.toLocaleString(), "#e2e8f0"],
-                  [
-                    "Favorite",
-                    TOWER_TYPES[commanderStats.favoriteTower]?.name ||
-                      commanderStats.favoriteTower ||
-                      "None",
-                    "#c4b5fd",
-                  ],
-                  [
-                    "Kills",
-                    commanderStats.totalEnemiesDestroyed.toLocaleString(),
-                    "#fca5a5",
-                  ],
-                ].map(([label, value, color]) => (
-                  <div key={label}>
-                    <div style={{ fontSize: 8, color: "#475569" }}>{label}</div>
-                    <div style={{ fontSize: 11, color, fontWeight: "bold" }}>
-                      {value}
+                  {[
+                    ["Runs", commanderStats.totalRuns, "#93c5fd"],
+                    ["Wins", commanderStats.totalWins, "#86efac"],
+                    ["Best Wave", commanderStats.bestWave, "#fbbf24"],
+                    [
+                      "Best Score",
+                      commanderStats.bestScore.toLocaleString(),
+                      "#e2e8f0",
+                    ],
+                    [
+                      "Favorite",
+                      TOWER_TYPES[commanderStats.favoriteTower]?.name ||
+                        commanderStats.favoriteTower ||
+                        "None",
+                      "#c4b5fd",
+                    ],
+                    [
+                      "Kills",
+                      commanderStats.totalEnemiesDestroyed.toLocaleString(),
+                      "#fca5a5",
+                    ],
+                  ].map(([label, value, color]) => (
+                    <div key={label}>
+                      <div style={{ fontSize: 8, color: "#475569" }}>
+                        {label}
+                      </div>
+                      <div style={{ fontSize: 11, color, fontWeight: "bold" }}>
+                        {value}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
                 </div>
               </div>
             </Sect>
@@ -1545,7 +1607,9 @@ export function HUD({
                 <div style={{ fontSize: 9, color: "#94a3b8", marginBottom: 3 }}>
                   Source: {forecast?.source || "None"}
                 </div>
-                <div style={{ fontSize: 10, color: "#fbbf24", lineHeight: 1.5 }}>
+                <div
+                  style={{ fontSize: 10, color: "#fbbf24", lineHeight: 1.5 }}
+                >
                   {forecast?.detail || "The AI does not have a clear read yet."}
                 </div>
               </div>
@@ -2023,6 +2087,79 @@ export function HUD({
           </div>
         </div>
       )}
+
+      {/* Achievements */}
+      <div
+        style={{
+          marginTop: 10,
+          borderTop: "1px solid #1e293b",
+          paddingTop: 8,
+          marginBottom: showAchievements ? 10 : 0,
+        }}
+      >
+        <button
+          onClick={onToggleAchievements}
+          style={{
+            width: "100%",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            padding: "0 0 8px 0",
+            fontFamily: mono,
+          }}
+        >
+          <div
+            style={{ fontSize: 9, color: "#818cf8", letterSpacing: "0.1em" }}
+          >
+            🏅 ACHIEVEMENTS ({Object.keys(unlockedAchievements).length}/
+            {Object.keys(ACHIEVEMENTS).length})
+          </div>
+          <span style={{ fontSize: 9, color: "#475569" }}>
+            {showAchievements ? "▲ hide" : "▼ show"}
+          </span>
+        </button>
+
+        {showAchievements && (
+          <div
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}
+          >
+            {Object.values(ACHIEVEMENTS).map((ach) => {
+              const unlocked = !!unlockedAchievements[ach.id];
+              return (
+                <div
+                  key={ach.id}
+                  style={{
+                    padding: "5px 7px",
+                    borderRadius: 4,
+                    background: unlocked ? "#1a1a0a" : "#0d1117",
+                    border: `1px solid ${unlocked ? "#fbbf24" : "#1e293b"}`,
+                    opacity: unlocked ? 1 : 0.45,
+                  }}
+                >
+                  <div style={{ fontSize: 12 }}>{ach.icon}</div>
+                  <div
+                    style={{
+                      fontSize: 9,
+                      color: unlocked ? "#fde68a" : "#6b7280",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {ach.name}
+                  </div>
+                  <div
+                    style={{ fontSize: 8, color: "#475569", lineHeight: 1.4 }}
+                  >
+                    {ach.secret && !unlocked ? "???" : ach.desc}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* High Scores */}
       <div
@@ -2908,7 +3045,9 @@ function getBestBossPressure(bossEncounters) {
 function getRivalDossier(memory) {
   const favoredTowerKey = getTopMemoryKey(memory?.towerUsageHistory);
   const favoredTower =
-    TOWER_TYPES[favoredTowerKey]?.name || favoredTowerKey || "Insufficient data";
+    TOWER_TYPES[favoredTowerKey]?.name ||
+    favoredTowerKey ||
+    "Insufficient data";
 
   const exploitKey = getTopMemoryKey(memory?.weaknessSuccessRate);
   const favoriteExploit =

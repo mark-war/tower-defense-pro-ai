@@ -1467,3 +1467,243 @@ export const ADMIN_CONFIG = {
 
 export const STARTING_GOLD = 350;
 export const STARTING_LIVES = 25;
+
+// ─── WAVE MODIFIERS ───────────────────────────────────────────────────────────
+export const WAVE_MODIFIERS = [
+  // ── Debuffs ──────────────────────────────────────────────────────────────
+  {
+    id: "armored_tide",
+    name: "Armored Tide",
+    icon: "🛡️",
+    color: "#94a3b8",
+    desc: "All enemies gain +35% armor",
+    type: "debuff",
+    apply: { enemyArmorBonus: 0.35 },
+  },
+  {
+    id: "haste_protocol",
+    name: "Haste Protocol",
+    icon: "💨",
+    color: "#facc15",
+    desc: "All enemies move 55% faster",
+    type: "debuff",
+    apply: { enemySpeedMult: 0.55 },
+  },
+  {
+    id: "fog_of_war",
+    name: "Fog of War",
+    icon: "🌫️",
+    color: "#64748b",
+    desc: "All tower ranges cut by 35%",
+    type: "debuff",
+    apply: { towerRangeMult: -0.35 },
+  },
+  {
+    id: "void_surge",
+    name: "Void Surge",
+    icon: "👻",
+    color: "#a78bfa",
+    desc: "All enemies gain stealth — Laser essential",
+    type: "debuff",
+    apply: { allStealth: true },
+  },
+  {
+    id: "elite_squad",
+    name: "Elite Squad",
+    icon: "💀",
+    color: "#ef4444",
+    desc: "3 elites spawn: 5× HP, 8× reward",
+    type: "debuff",
+    apply: { eliteCount: 3, eliteHpMult: 5, eliteRewardMult: 8 },
+  },
+  {
+    id: "regenerating_horde",
+    name: "Regenerating Horde",
+    icon: "💚",
+    color: "#4ade80",
+    desc: "Enemies slowly recover HP — kill fast!",
+    type: "debuff",
+    apply: { enemyRegenRate: 0.0015 },
+  },
+  // ── Buffs ─────────────────────────────────────────────────────────────────
+  {
+    id: "gold_rush",
+    name: "Gold Rush",
+    icon: "💰",
+    color: "#facc15",
+    desc: "Enemies drop 2.5× gold this wave",
+    type: "buff",
+    apply: { enemyRewardMult: 2.5 },
+  },
+  {
+    id: "overcharge",
+    name: "Overcharge",
+    icon: "🔋",
+    color: "#4ade80",
+    desc: "All towers fire 45% faster this wave",
+    type: "buff",
+    apply: { towerFireRateMult: 0.45 },
+  },
+  {
+    id: "armor_melt",
+    name: "Armor Melt",
+    icon: "🔥",
+    color: "#f97316",
+    desc: "All enemy armor reduced by 65%",
+    type: "buff",
+    apply: { enemyArmorMelt: 0.65 },
+  },
+  // ── Chaos ─────────────────────────────────────────────────────────────────
+  {
+    id: "double_time",
+    name: "Double Time",
+    icon: "⏩",
+    color: "#818cf8",
+    desc: "2× enemies spawn, 1.8× gold reward",
+    type: "chaos",
+    apply: { enemyCountMult: 2, enemyRewardMult: 1.8 },
+  },
+  {
+    id: "empowered_boss",
+    name: "Empowered Boss",
+    icon: "👑",
+    color: "#fbbf24",
+    desc: "Boss has 2× HP — kills drop legendary loot",
+    type: "chaos",
+    apply: { bossHpMult: 2, bossLegendaryLoot: true },
+  },
+  {
+    id: "tower_silence",
+    name: "Tower Silence",
+    icon: "🔇",
+    color: "#ef4444",
+    desc: "One random tower type is disabled this wave",
+    type: "chaos",
+    apply: { silenceRandom: true },
+  },
+];
+
+// ─── BOSS MUTATIONS ───────────────────────────────────────────────────────────
+export const BOSS_MUTATIONS = [
+  {
+    id: "iron_shell",
+    name: "Iron Shell",
+    icon: "🛡️",
+    desc: "+40% armor",
+    apply: { armorBonus: 0.4 },
+  },
+  {
+    id: "overclocked",
+    name: "Overclocked",
+    icon: "⚡",
+    desc: "+70% speed",
+    apply: { speedMult: 1.7 },
+  },
+  {
+    id: "phase_cloak",
+    name: "Phase Cloak",
+    icon: "👻",
+    desc: "Stealth below 60% HP",
+    apply: { stealthBelowHp: 0.6 },
+  },
+  {
+    id: "regenerating",
+    name: "Regenerating",
+    icon: "💚",
+    desc: "Recovers 0.8% max HP/sec",
+    apply: { regenRate: 0.008 },
+  },
+  {
+    id: "colossal",
+    name: "Colossal",
+    icon: "🌍",
+    desc: "+120% HP, −30% speed",
+    apply: { hpMult: 2.2, speedMult: 0.7 },
+  },
+  {
+    id: "enraged_escort",
+    name: "Enraged Escort",
+    icon: "🗡️",
+    desc: "Escort units have 3× HP",
+    apply: { escortHpMult: 3 },
+  },
+  {
+    id: "twin_spawn",
+    name: "Twin Spawn",
+    icon: "👥",
+    desc: "Spawns a 60%-HP clone at 50% health",
+    apply: { twinAt: 0.5, twinHpFraction: 0.6 },
+  },
+  {
+    id: "stun_immune",
+    name: "Stun Immune",
+    icon: "🔰",
+    desc: "Fully immune to stuns and slows",
+    apply: { immuneStunSlow: true },
+  },
+];
+
+// ─── ACHIEVEMENTS ─────────────────────────────────────────────────────────────
+export const ACHIEVEMENTS = {
+  first_wave: {
+    id: "first_wave",
+    name: "First Blood",
+    icon: "🗡️",
+    desc: "Complete your first wave",
+  },
+  no_leak: {
+    id: "no_leak",
+    name: "Flawless Wave",
+    icon: "🛡️",
+    desc: "Complete a wave with zero leaks",
+  },
+  boss_slayer: {
+    id: "boss_slayer",
+    name: "Boss Slayer",
+    icon: "💀",
+    desc: "Kill your first boss",
+  },
+  modifier_survive: {
+    id: "modifier_survive",
+    name: "Chaos Survivor",
+    icon: "🌀",
+    desc: "Survive a wave with an active modifier",
+  },
+  wave_25: {
+    id: "wave_25",
+    name: "Veteran",
+    icon: "🎖️",
+    desc: "Reach wave 25",
+  },
+  wave_50: {
+    id: "wave_50",
+    name: "Siege Master",
+    icon: "🏆",
+    desc: "Reach wave 50",
+  },
+  synergist: {
+    id: "synergist",
+    name: "Synergist",
+    icon: "✨",
+    desc: "Have 3+ active synergies at once",
+  },
+  perfect_run: {
+    id: "perfect_run",
+    name: "Untouchable",
+    icon: "⭐",
+    desc: "Win a level without losing a single life",
+    secret: true,
+  },
+  gold_hoarder: {
+    id: "gold_hoarder",
+    name: "Gold Hoarder",
+    icon: "💰",
+    desc: "Accumulate 2000g at once",
+  },
+  mutation_slayer: {
+    id: "mutation_slayer",
+    name: "Mutant Slayer",
+    icon: "🧬",
+    desc: "Kill a mutated boss",
+  },
+};

@@ -15,6 +15,7 @@ import {
   WAVE_MODIFIERS,
   BOSS_MUTATIONS,
   ACHIEVEMENTS,
+  SKINS,
 } from "./gameConstants.js";
 import { WaveAI } from "./WaveAI.js";
 import { Kingdom } from "./Kingdom.js";
@@ -34,17 +35,32 @@ export class GameEngine {
     this._loop();
   }
 
-  _applyLevel(levelId) {
+  _applyLevel(levelId, savedMapKey = null) {
     const isEndless = levelId === 99;
     const lvl = isEndless
       ? ENDLESS_CONFIG
       : LEVELS.find((l) => l.id === levelId) || LEVELS[0];
+
     this.levelConfig = lvl;
     this.isEndless = isEndless;
     this.xpMult = lvl.xpMult ?? 1.0;
-    // Endless rotates maps
-    const mapKey = isEndless ? "valley" : lvl.map || "valley";
-    this.mapDef = MAPS[mapKey] || MAPS.valley;
+
+    // ── MAP HANDLING ─────────────────────────────────────
+    let mapKeyToUse = savedMapKey || "valley";
+
+    if (!mapKeyToUse || !MAPS[mapKeyToUse]) {
+      mapKeyToUse = lvl.map; // fallback to level default
+    }
+
+    this.mapDef = MAPS[mapKeyToUse];
+    this._currentMapKey = mapKeyToUse;
+
+    // Safety check
+    if (!this.mapDef) {
+      console.warn(`Map "${mapKeyToUse}" not found. Falling back to spiral.`);
+      this.mapDef = MAPS.spiral;
+      this._currentMapKey = "spiral";
+    }
 
     this.fortifyLevel = 0;
     this.fortifyCost = ECFG.fortifyCostBase;
@@ -90,6 +106,11 @@ export class GameEngine {
     this.waveLeaks = 0;
     this.waveDamageByTower = {};
     this.waveGoldSpent = 0;
+
+    this._waveStartTick = 0;
+    this.lastWaveClearTime = 0;
+    this.fastestWaveClear = Infinity;
+
     this.nextWaveMessage = "Deploy towers, then start wave.";
     this.bossWarningTimer = 0;
     this.bossWarningType = null;
@@ -115,11 +136,30 @@ export class GameEngine {
     console.log(this.path[0].x, this.path[0].y);
     console.log(lastPt.x, lastPt.y);
 
+    this.milestoneBonus = null; // ← persists across startWave() resets
+    this.secondSpawnCamp = null; // ← dual-front camp reference
+    this._secondPath = null; // ← short path for second entry
+
+    this._secondPathCells = new Set();
+
     this._streakCount = 0;
     this._streakTimer = 0;
     this._streakWindow = 0;
 
     this.paused = false;
+
+    this.activeMapBonus = this.mapDef?.mapBonus || null;
+    this._towerShotCounters = {}; // for nuke/nuclear tracking
+
+    this.evolutionAlertTimer = 0;
+    this.evolutionAlertDef = null;
+
+    this._incomingModifier = null;
+    this._eliteSpawnedCount = 0;
+    this._pendingBossMutation = null;
+    this.bossWarningMutation = null;
+    this.lastWaveClearTime = 0;
+    this.fastestWaveClear = Infinity;
 
     this.activeModifier = null;
     this.silencedTowerType = null;
@@ -135,6 +175,22 @@ export class GameEngine {
     };
     this._runAchievements = []; // unlocked this run
     this._newAchievementId = null; // triggers toast
+
+    this.burnZones = []; // burnOnSplash ground fire
+    this.darkStarEnemyIds = new Set();
+    this.blackHoles = []; // Singularity black holes
+    this.ballLightnings = []; // Ball Lightning orbs
+
+    this.milestoneBonus = null;
+    this.secondSpawnCamp = null;
+    this._secondPath = null;
+
+    this.activeSkin = SKINS.default;
+  }
+
+  setSkin(skinId) {
+    this.activeSkin = SKINS[skinId] || SKINS.default;
+    this._emitState();
   }
 
   _setupCanvas() {
@@ -235,6 +291,17 @@ export class GameEngine {
       armorPiercing: tDef.armorPiercing || false,
       burnDamage: tDef.burnDamage || 0,
       burnDuration: tDef.burnDuration || 0,
+
+      // Tower HP (for enemy attack system)
+      hp: tDef.towerHp || 200,
+      maxHp: tDef.towerMaxHp || 200,
+      damageResist: tDef.attackDamageResist || 0,
+      disabled: false,
+      repairCost: 0,
+      lastDamagedTick: 0,
+      homing: tDef.homing || false,
+      _shotCount: 0, // for nuke/nuclear payload counters
+
       // Upgrade tracking — phased system
       xp: 0,
       passiveTier: 0, // 0–9, which passive tiers have been applied
@@ -270,6 +337,13 @@ export class GameEngine {
       cost: tDef.cost,
       category: tDef.category,
     };
+
+    const skinTower = this.activeSkin?.towers?.[this.selectedTowerType];
+    if (skinTower) {
+      tower.color = skinTower.color;
+      tower.projectileColor = skinTower.projectileColor;
+    }
+
     this.grid[row][col] = tower;
     this.towers.push(tower);
     this.gold -= tDef.cost;
@@ -419,6 +493,11 @@ export class GameEngine {
     // ✅ specials
     if (costDef.special) {
       tower.specials.push(costDef.special);
+
+      // splash30: grant base splash if tower has none
+      if (costDef.special === "splash30" && !tower.splash) {
+        tower.splash = Math.max(tower.splash || 0, 30);
+      }
 
       if (costDef.special === "armorPiercing") {
         tower.armorPiercing = true;
@@ -581,37 +660,52 @@ export class GameEngine {
     return true;
   }
 
+  _weightedRandomModifier() {
+    const total = WAVE_MODIFIERS.reduce((s, m) => s + (m.weight || 1), 0);
+    let roll = Math.random() * total;
+    for (const m of WAVE_MODIFIERS) {
+      roll -= m.weight || 1;
+      if (roll <= 0) return m;
+    }
+    return WAVE_MODIFIERS[WAVE_MODIFIERS.length - 1];
+  }
+
   // ── WAVE MANAGEMENT ──────────────────────────────────────────────────────────
   startWave() {
     if (this.state !== "idle") return;
     this.wave++;
 
-    // ── Endless map rotation ──────────────────────────────────────────────────
     if (this.isEndless && this.wave % 10 === 0 && this.wave > 0) {
-      const mapKeys = Object.keys(MAPS);
-      const newMap = MAPS[mapKeys[(this.wave / 10) % mapKeys.length]];
-      if (newMap) {
-        this.mapDef = newMap;
-        this.path = this._buildPath(newMap.waypoints);
-        this.pathCells = this._buildPathCells(newMap.waypoints);
-        const lastPt = this.path[this.path.length - 1];
-        this.kingdom = new Kingdom(lastPt.x, lastPt.y);
-        this.spawnCamps = [new SpawnCamp(this.path[0].x, this.path[0].y, 0)];
-        this._addFloatingText(
-          this.canvas.width / 2,
-          this.canvas.height / 2 - 20,
-          `🗺 Map shifted: ${newMap.name}!`,
-          "#818cf8",
-        );
-      }
+      const bonusPool = [
+        { type: "gold", value: 0.2, label: "💰 +20% gold drops" },
+        { type: "damage", value: 0.15, label: "⚔️ +15% tower damage" },
+        { type: "range", value: 0.12, label: "🔭 +12% tower range" },
+        { type: "fireRate", value: 0.12, label: "⚡ +12% fire rate" },
+        { type: "damage", value: 0.2, label: "☢️ +20% tower damage" },
+        { type: "gold", value: 0.3, label: "💰 +30% gold drops" },
+      ];
+      const bonusIdx = Math.floor(this.wave / 10) - 1;
+      this.milestoneBonus = bonusPool[bonusIdx % bonusPool.length];
+      this._addFloatingText(
+        this.canvas.width / 2,
+        this.canvas.height / 2 - 30,
+        `⚡ WAVE ${this.wave} MILESTONE: ${this.milestoneBonus.label}`,
+        "#fbbf24",
+      );
     }
 
     // ── Roll wave modifier every 10 waves ────────────────────────────────────
     this.activeModifier = null;
+    this.activeMapBonus = this.mapDef?.mapBonus || null;
+    if (this.milestoneBonus) this.activeMapBonus = this.milestoneBonus;
+
+    // silenced tower type settings
     this.silencedTowerType = null;
     if (this.wave % 10 === 0) {
+      // Use pre-rolled modifier if available, otherwise roll fresh
       this.activeModifier =
-        WAVE_MODIFIERS[Math.floor(Math.random() * WAVE_MODIFIERS.length)];
+        this._incomingModifier || this._weightedRandomModifier();
+      this._incomingModifier = null;
       this.runStats.modifiersFaced.push(this.activeModifier.id);
 
       if (this.activeModifier.apply?.silenceRandom) {
@@ -620,6 +714,90 @@ export class GameEngine {
         );
         this.silencedTowerType =
           silenceable[Math.floor(Math.random() * silenceable.length)];
+      }
+
+      // ── Dual-front setup ──────────────────────────────────────────────────
+      // Clean up any leftover camp from a previous wave
+      if (this.secondSpawnCamp) {
+        this.spawnCamps = this.spawnCamps.filter(
+          (c) => c !== this.secondSpawnCamp,
+        );
+        this.secondSpawnCamp = null;
+        this._secondPath = null;
+      }
+
+      if (this.activeModifier?.apply?.dualFront) {
+        // Pick a second entry point on the OPPOSITE vertical edge from the first
+        const firstRow = this.mapDef.waypoints[0].row;
+        const secondRow =
+          firstRow < GRID_ROWS / 2
+            ? Math.floor(GRID_ROWS * 0.75) // first is top-half → second is bottom
+            : Math.floor(GRID_ROWS * 0.25); // first is bottom-half → second is top
+
+        // Build a short 3-waypoint path: left edge → mid-column → join main path
+        const midCol = Math.floor(GRID_COLS * 0.45);
+        const joinIdx = Math.floor(this.path.length * 0.55); // join ~55% along main path
+        const joinPt = this.path[joinIdx];
+
+        this._secondPath = this._buildPath([
+          { col: 0, row: secondRow },
+          { col: midCol, row: secondRow },
+          {
+            col: Math.floor(joinPt.x / CELL_SIZE),
+            row: Math.floor(joinPt.y / CELL_SIZE),
+          },
+          // remaining waypoints from the join point onward (reuse main path exit)
+          ...this.mapDef.waypoints.slice(
+            this.mapDef.waypoints.findIndex(
+              (wp) => Math.abs(wp.col - Math.floor(joinPt.x / CELL_SIZE)) <= 3,
+            ),
+          ),
+        ]);
+
+        // Clamp to the last map waypoint so enemies always exit properly
+        if (!this._secondPath || this._secondPath.length < 4) {
+          // Fallback: simple straight path from second row to the kingdom
+          const lastWp =
+            this.mapDef.waypoints[this.mapDef.waypoints.length - 1];
+          this._secondPath = this._buildPath([
+            { col: 0, row: secondRow },
+            { col: midCol, row: secondRow },
+            { col: lastWp.col, row: lastWp.row },
+          ]);
+        }
+
+        // Build second path cell set so it renders on the grid
+        this.secondSpawnCamp = new SpawnCamp(
+          this._secondPath[0].x,
+          this._secondPath[0].y,
+          1, // campIndex 1 → different visual tint
+        );
+        this.spawnCamps.push(this.secondSpawnCamp);
+
+        this._secondPathCells = new Set();
+        for (let i = 0; i < this._secondPath.length - 1; i++) {
+          const a = this._secondPath[i];
+          const b = this._secondPath[i + 1];
+          const steps = Math.max(
+            Math.abs(Math.floor(b.x / CELL_SIZE) - Math.floor(a.x / CELL_SIZE)),
+            Math.abs(Math.floor(b.y / CELL_SIZE) - Math.floor(a.y / CELL_SIZE)),
+          );
+          for (let s = 0; s <= steps; s++) {
+            const col = Math.round(
+              Math.floor(a.x / CELL_SIZE) +
+                ((Math.floor(b.x / CELL_SIZE) - Math.floor(a.x / CELL_SIZE)) *
+                  s) /
+                  Math.max(steps, 1),
+            );
+            const row = Math.round(
+              Math.floor(a.y / CELL_SIZE) +
+                ((Math.floor(b.y / CELL_SIZE) - Math.floor(a.y / CELL_SIZE)) *
+                  s) /
+                  Math.max(steps, 1),
+            );
+            this._secondPathCells.add(`${col},${row}`);
+          }
+        }
       }
     }
 
@@ -650,7 +828,7 @@ export class GameEngine {
     this._eliteSpawnedCount = 0;
     this.spawnQueue = [...waveData.enemies];
 
-    // Apply double-time modifier (duplicate spawn queue with delay offset)
+    // Apply double-time modifier
     if (this.activeModifier?.apply?.enemyCountMult) {
       const mult = Math.floor(this.activeModifier.apply.enemyCountMult);
       const original = [...this.spawnQueue];
@@ -667,12 +845,35 @@ export class GameEngine {
       this.spawnQueue.sort((a, b) => a.spawnDelay - b.spawnDelay);
     }
 
+    // Apply dual assault modifier — second enemy group with mirrored delays
+    if (this.activeModifier?.apply?.dualAssault) {
+      const original = [...this.spawnQueue];
+      // Build a second group with staggered start so both groups run concurrently
+      const lastDelay = original[original.length - 1]?.spawnDelay || 0;
+      const secondGroup = original
+        .filter((e) => !e.isBoss) // don't duplicate bosses
+        .map((e) => ({
+          ...e,
+          spawnDelay: e.spawnDelay + Math.floor(lastDelay * 0.35) + 20,
+        }));
+      this.spawnQueue.push(...secondGroup);
+      this.spawnQueue.sort((a, b) => a.spawnDelay - b.spawnDelay);
+    }
+
+    // Tag alternate enemies for the second spawn point (dual-front)
+    if (this.activeModifier?.apply?.dualFront && this._secondPath) {
+      this.spawnQueue.forEach((e, idx) => {
+        if (idx % 2 === 1) e._useSecondPath = true;
+      });
+    }
+
     this.spawnTimer = 0;
     this.waveKills = 0;
     this.waveLeaks = 0;
     this.waveDamageByTower = {};
     this.waveGoldSpent = 0;
     this.state = "wave";
+    this._waveStartTick = this.tick;
     this.nextWaveMessage = waveData.message;
     this.lastEnemyTypes = [...new Set(waveData.enemies.map((e) => e.type))];
     this.minRequiredTowers = this.waveAI.calcMinimumRequiredTowers(
@@ -686,6 +887,7 @@ export class GameEngine {
   _spawnEnemy(data) {
     const def = ENEMY_TYPES[data.type];
     if (!def) return;
+
     const e = {
       id: Date.now() + Math.random(),
       type: data.type,
@@ -727,7 +929,10 @@ export class GameEngine {
       burnStacks: 0, // for hellfire upgrade
       assistTowers: new Set(),
       stunImmunity: 0,
+      rageTimer: 0,
+      waveClearTime: 0,
     };
+
     // ── Apply wave modifier to this enemy ─────────────────────────────────────
     if (this.activeModifier) {
       const mod = this.activeModifier.apply;
@@ -780,6 +985,11 @@ export class GameEngine {
         e.stunImmunity = 999999;
       }
       // twin/stealth/regen handled in _updateEnemies
+
+      // Clear pending mutation after boss has received it (not escorts)
+      if (e.isBoss && this._pendingBossMutation) {
+        this._pendingBossMutation = null;
+      }
     }
 
     // ── Empowered boss loot override ──────────────────────────────────────────
@@ -794,6 +1004,50 @@ export class GameEngine {
         };
       }
     }
+
+    // ── Apply active evolutions for this enemy type ───────────────────────────
+    const evolutions = this.waveAI.getActiveEvolutionsForType(data.type);
+    e.activeEvolutions = [];
+    for (const evo of evolutions) {
+      e.activeEvolutions.push(evo.id);
+      const a = evo.apply;
+      if (a.hpMult) {
+        e.hp *= a.hpMult;
+        e.maxHp = e.hp;
+      }
+      if (a.armorBonus) e.armor = Math.min(0.92, e.armor + a.armorBonus);
+      if (a.speedMult) {
+        e.speed *= a.speedMult;
+        e.baseSpeed = e.speed;
+      }
+      if (a.immuneSlow) e.immunities.push("freeze");
+      if (a.immunities) e.immunities.push(...a.immunities);
+      if (a.size) e.size = Math.max(4, e.size + a.size);
+      if (a.dodgeChance) e.dodgeChance = a.dodgeChance;
+      if (a.phaseCycle) e.phaseCycle = a.phaseCycle;
+      if (a.piercingResist) e.piercingResist = a.piercingResist;
+      if (a.scatterFormation) e.scatterFormation = true;
+    }
+
+    // Check and show evolution alert
+    if (this.waveAI.pendingEvolutionAlert) {
+      this.evolutionAlertDef = this.waveAI.pendingEvolutionAlert;
+      this.evolutionAlertTimer =
+        ADMIN_CONFIG.enemyEvolution?.evolutionNotifyFrames || 180;
+      this.waveAI.pendingEvolutionAlert = null;
+    }
+
+    // Route to second path if flagged by dual-front modifier
+    if (data._useSecondPath && this._secondPath?.length > 1) {
+      e.x = this._secondPath[0].x;
+      e.y = this._secondPath[0].y;
+      e._altPath = this._secondPath; // enemies carry their own path reference
+      e.pathIndex = 0;
+    }
+
+    const skinEnemy = this.activeSkin?.enemies?.[data.type];
+    if (skinEnemy?.color) e.color = skinEnemy.color;
+
     this.enemies.push(e);
   }
 
@@ -811,12 +1065,137 @@ export class GameEngine {
 
   // ── ENEMY UPDATE ─────────────────────────────────────────────────────────────
   _updateEnemies() {
+    // ── BURN ZONES - ground fire from burnOnSplash
+    for (let i = this.burnZones.length - 1; i >= 0; i--) {
+      const z = this.burnZones[i];
+      z.timer--;
+      if (z.timer <= 0) {
+        this.burnZones.splice(i, 1);
+        continue;
+      }
+      if (this.tick % 20 === 0) {
+        for (const e of this.enemies) {
+          const d = Math.sqrt((e.x - z.x) ** 2 + (e.y - z.y) ** 2);
+          if (d < z.radius) {
+            e.hp -= z.damage;
+            if (!e.burnTimer) {
+              e.burnTimer = Math.max(e.burnTimer, 60);
+              e.burnDmg = Math.max(e.burnDmg, z.damage);
+            }
+            if (e.hp <= 0) this._killEnemy(e, "inferno", null);
+          }
+        }
+      }
+    }
+
+    // ── BLACK HOLES — pull all nearby enemies and damage them
+    for (let i = this.blackHoles.length - 1; i >= 0; i--) {
+      const bh = this.blackHoles[i];
+      bh.timer--;
+      if (bh.timer <= 0) {
+        this.blackHoles.splice(i, 1);
+        continue;
+      }
+      for (const e of this.enemies) {
+        const dx = bh.x - e.x,
+          dy = bh.y - e.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        if (dist < bh.radius) {
+          // Pull toward center
+          e.x += (dx / dist) * bh.strength * (1 - dist / bh.radius);
+          e.y += (dy / dist) * bh.strength * (1 - dist / bh.radius);
+          // Damage tick
+          if (this.tick % 20 === 0) {
+            e.hp -= 8;
+            if (e.hp <= 0) this._killEnemy(e, "basic", null);
+          }
+        }
+      }
+    }
+
+    // ── BALL LIGHTNING: spawn roaming orbs
+    for (let i = this.ballLightnings.length - 1; i >= 0; i--) {
+      const bl = this.ballLightnings[i];
+      bl.timer--;
+      if (bl.timer <= 0) {
+        this.ballLightnings.splice(i, 1);
+        continue;
+      }
+
+      // Drift toward nearest enemy
+      const nearest = this.enemies
+        .filter(
+          (e) =>
+            !e.stealth ||
+            this.towers.some((t) => t.specials?.includes("allReveal")),
+        )
+        .sort((a, b) => {
+          const da = (a.x - bl.x) ** 2 + (a.y - bl.y) ** 2;
+          const db = (b.x - bl.x) ** 2 + (b.y - bl.y) ** 2;
+          return da - db;
+        })[0];
+
+      if (nearest) {
+        const dx = nearest.x - bl.x,
+          dy = nearest.y - bl.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        bl.vx += (dx / dist) * 0.3;
+        bl.vy += (dy / dist) * 0.3;
+      }
+
+      // Cap speed
+      const spd = Math.sqrt(bl.vx * bl.vx + bl.vy * bl.vy);
+      if (spd > 3) {
+        bl.vx = (bl.vx / spd) * 3;
+        bl.vy = (bl.vy / spd) * 3;
+      }
+
+      bl.x += bl.vx;
+      bl.y += bl.vy;
+
+      // Bounce off canvas edges
+      if (bl.x < 0 || bl.x > this.canvas.width) bl.vx *= -1;
+      if (bl.y < 0 || bl.y > this.canvas.height) bl.vy *= -1;
+
+      // Zap nearby enemies every 20 ticks
+      if (bl.zapCooldown > 0) {
+        bl.zapCooldown--;
+        continue;
+      }
+
+      const zapTargets = this.enemies
+        .filter(
+          (e) =>
+            Math.sqrt((e.x - bl.x) ** 2 + (e.y - bl.y) ** 2) < bl.zapRadius,
+        )
+        .slice(0, 3);
+
+      for (const t of zapTargets) {
+        this._damageEnemy(t, bl.damage, {
+          towerType: "tesla",
+          towerId: bl.towerId,
+          armorPiercing: true,
+          specials: [],
+        });
+        this._addBolt(bl.x, bl.y, t.x, t.y, bl.color);
+      }
+      if (zapTargets.length > 0) bl.zapCooldown = 20;
+    }
+
+    // enemies loop
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
 
-      // Stun takes priority over slow
+      // stun takes priority over slow
       if (e.stunImmunity > 0) e.stunImmunity--;
 
+      // decrement solar blind
+      if (e._solarBlindCooldown > 0) e._solarBlindCooldown--;
+
+      // decrement dark star debuff
+      if (e._darkStarDebuffTimer > 0) e._darkStarDebuffTimer--;
+
+      // stun timer
       if (e.stunTimer > 0) {
         e.stunTimer--;
         e.speed = 0;
@@ -828,6 +1207,68 @@ export class GameEngine {
       }
       e.speed =
         e.slowTimer > 0 ? (e.slowTimer--, e.baseSpeed * 0.38) : e.baseSpeed;
+
+      // ── GRAVITY LOCK: Vortex Event Horizon — stop enemies in range ───────────
+      for (const glt of this.towers) {
+        if (!glt.specials?.includes("gravityLock")) continue;
+        const gld = Math.sqrt((e.x - glt.x) ** 2 + (e.y - glt.y) ** 2);
+        if (gld <= glt.range) {
+          e.speed = 0;
+          break;
+        }
+      }
+
+      // ── GLOBAL SLOW: Absolute Zero — all enemies permanently slowed ──────────
+      const hasGlobalSlow = this.towers.some((t) =>
+        t.specials?.includes("globalSlow"),
+      );
+      if (hasGlobalSlow && !e.immunities.includes("freeze")) {
+        const globalSlowTower = this.towers.find((t) =>
+          t.specials?.includes("globalSlow"),
+        );
+        if (globalSlowTower) {
+          const dist = Math.sqrt(
+            (e.x - globalSlowTower.x) ** 2 + (e.y - globalSlowTower.y) ** 2,
+          );
+          if (dist <= globalSlowTower.range * 2.5) {
+            // ← range-limited now
+            e.slowTimer = Math.max(e.slowTimer, 5);
+          }
+        }
+      }
+
+      // ── ARMOR SLOW: Permafrost — slowed enemies lose 30% armor ───────────────
+      if (e.slowTimer > 1 && e._armorBeforeSlow === undefined) {
+        if (this.towers.some((t) => t.specials?.includes("armorSlow"))) {
+          e._armorBeforeSlow = e.armor;
+          e.armor = Math.max(0, e.armor - 0.3);
+        }
+      }
+      if (e.slowTimer <= 1 && e._armorBeforeSlow !== undefined) {
+        e.armor = e._armorBeforeSlow;
+        delete e._armorBeforeSlow;
+      }
+
+      // Phase cycle (evolved ghosts blink in/out)
+      if (e.phaseCycle) {
+        e.stealth = Math.floor(this.tick / (e.phaseCycle / 2)) % 2 === 0;
+      }
+
+      // Scatter formation — stay spread from nearby same-type enemies
+      if (e.scatterFormation) {
+        for (const other of this.enemies) {
+          if (other.id === e.id || other.type !== e.type) continue;
+          const dx = e.x - other.x,
+            dy = e.y - other.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 40 && dist > 0) {
+            // wider detection radius
+            const push = 1.8 * (1 - dist / 40); // stronger push when closer
+            e.x += (dx / dist) * push;
+            e.y += (dy / dist) * push;
+          }
+        }
+      }
 
       // Burn DoT
       if (e.burnTimer > 0) {
@@ -849,6 +1290,73 @@ export class GameEngine {
             this._killEnemy(e, "inferno", e.burnSourceId);
             continue;
           }
+        }
+      }
+
+      // ── Medic escort — stay with nearby allies, don't race ahead ─────────
+      if (e.type === "healer") {
+        const escortRadius = (ENEMY_TYPES.healer.healRadius || 90) * 2.2;
+        const nearby = this.enemies.filter((other) => {
+          if (other.id === e.id || other.type === "healer" || other.isBoss)
+            return false;
+          const ddx = other.x - e.x,
+            ddy = other.y - e.y;
+          return Math.sqrt(ddx * ddx + ddy * ddy) <= escortRadius;
+        });
+
+        if (nearby.length > 0) {
+          // Average path index of nearby allies
+          const avgIdx =
+            nearby.reduce((sum, a) => sum + a.pathIndex, 0) / nearby.length;
+
+          if (e.pathIndex > avgIdx + 4) {
+            // Too far ahead — slow to 35% so allies catch up
+            e.speed = e.baseSpeed * 0.35;
+          } else if (e.pathIndex < avgIdx - 6) {
+            // Falling behind — rush to 170% to rejoin
+            e.speed = Math.min(e.baseSpeed * 1.7, 3.5);
+          } else {
+            // In formation — match average speed of nearby group
+            const avgSpeed =
+              nearby.reduce((sum, a) => sum + a.baseSpeed, 0) / nearby.length;
+            e.speed = Math.max(
+              e.baseSpeed * 0.8,
+              Math.min(avgSpeed * 1.1, e.baseSpeed * 1.4),
+            );
+          }
+        }
+        // No nearby allies — advance normally (baseSpeed already set above)
+      }
+
+      // Heal interval shrinks at higher waves — healer becomes faster threat
+      const healInterval = Math.max(
+        30,
+        Math.floor(
+          (ENEMY_TYPES.healer.healInterval || 60) *
+            Math.max(0.5, 1 - this.wave * 0.004),
+        ),
+      );
+      if (e.type === "healer" && this.tick % healInterval === 0) {
+        let healed = 0;
+        const healRadius = ENEMY_TYPES.healer.healRadius || 90;
+        const healRate = ENEMY_TYPES.healer.healRate || 0.08;
+
+        for (const other of this.enemies) {
+          if (other.id === e.id || other.isBoss) continue;
+          const dx = other.x - e.x,
+            dy = other.y - e.y;
+          if (
+            Math.sqrt(dx * dx + dy * dy) <= healRadius &&
+            other.hp < other.maxHp
+          ) {
+            const healAmt = other.maxHp * healRate;
+            other.hp = Math.min(other.maxHp, other.hp + healAmt);
+            healed++;
+            this._addParticles(other.x, other.y - 8, "#4ade80", 5);
+          }
+        }
+        if (healed > 0) {
+          this._addFloatingText(e.x, e.y - 24, `⚕ HEAL ×${healed}`, "#4ade80");
         }
       }
 
@@ -937,19 +1445,73 @@ export class GameEngine {
         this._addFloatingText(e.x, e.y - 24, "⚠ PHASE 2!", "#ff4444");
       }
 
-      // Move
-      const tgt = this.path[e.pathIndex + 1];
+      // Boss rage — escalates every 25 seconds it survives
+      if (e.isBoss) {
+        e.rageTimer = (e.rageTimer || 0) + 1;
+        if (e.rageTimer > 0 && e.rageTimer % 1500 === 0) {
+          e.baseSpeed = Math.min(e.baseSpeed * 1.22, 2.8);
+          e.armor = Math.min(0.92, (e.armor || 0) + 0.05);
+          this._addParticles(e.x, e.y, "#ef4444", 30);
+          this._triggerShake(5, 8);
+          this._addFloatingText(e.x, e.y - 44, "🔥 BOSS ENRAGED!", "#ef4444");
+        }
+      }
+
+      // ── Enemy attacks nearby towers ────────────────────────────────────────
+      if (this.tick % 20 === 0) {
+        // check 3× per second
+        const atkDps = ENEMY_TYPES[e.type]?.attackDps || 0;
+        const atkRng = ENEMY_TYPES[e.type]?.attackRange || 0;
+        const dmgPer20 = atkDps / 3; // 20 ticks = 1/3 second
+
+        if (atkDps > 0) {
+          for (const tower of this.towers) {
+            const dx = tower.x - e.x,
+              dy = tower.y - e.y;
+            if (Math.sqrt(dx * dx + dy * dy) <= atkRng) {
+              const resist = tower.damageResist || 0;
+              const actualDmg = dmgPer20 * (1 - resist);
+              tower.hp = Math.max(0, tower.hp - actualDmg);
+              tower.lastDamagedTick = this.tick;
+              tower.repairCost = Math.ceil(
+                ((tower.maxHp - tower.hp) / tower.maxHp) * tower.cost * 0.4,
+              );
+
+              // Disable at 0 HP
+              if (tower.hp <= 0 && !tower.disabled) {
+                tower.disabled = true;
+                this._addFloatingText(
+                  tower.x,
+                  tower.y - 20,
+                  `⚠ ${TOWER_TYPES[tower.type]?.name} DISABLED!`,
+                  "#ef4444",
+                );
+                this._addParticles(tower.x, tower.y, "#ef4444", 20);
+              }
+
+              // Visual crack effect for heavy hits
+              if (actualDmg >= 5) {
+                this._addParticles(tower.x, tower.y, "#94a3b8", 3);
+              }
+              break; // one tower attacked per enemy per check
+            }
+          }
+        }
+      }
+
+      // Use alt path if this enemy was routed from the second entry point
+      const activePath = e._altPath ?? this.path;
+      const tgt = activePath[e.pathIndex + 1];
       if (!tgt) {
         this.lives = Math.max(0, this.lives - (e.isBoss ? 5 : 1));
         this.waveLeaks++;
         this._addFloatingText(
-          this.path[this.path.length - 1].x,
-          this.path[this.path.length - 1].y,
+          activePath[activePath.length - 1].x,
+          activePath[activePath.length - 1].y,
           e.isBoss ? "-5 ❤️" : "-1 ❤️",
           "#ef4444",
         );
         this.enemies.splice(i, 1);
-        // Last stand check
         this._checkLastStand();
         if (this.lives <= 0) {
           this.state = "gameover";
@@ -989,16 +1551,34 @@ export class GameEngine {
   _spawnChildAt(parent, type) {
     const def = ENEMY_TYPES[type];
     if (!def) return;
+
+    const CFG = ADMIN_CONFIG.ai;
+    const waveHpMult =
+      1 +
+      this.wave * (this.isEndless ? CFG.endlessHpPerWave : CFG.enemyHpPerWave);
+    const waveSpeedMult =
+      1 +
+      this.wave *
+        (this.isEndless ? CFG.endlessSpeedPerWave : CFG.enemySpeedPerWave);
+
+    const lateGameFactor =
+      this.wave > 20
+        ? Math.pow(CFG.lateGameExpScale || 1.18, (this.wave - 20) / 10)
+        : 1;
+
+    const scaledHp = def.hp * waveHpMult * lateGameFactor * 0.8;
+    const scaledSpeed = def.speed * waveSpeedMult;
+
     this.enemies.push({
       id: Date.now() + Math.random(),
       type,
       x: parent.x + (Math.random() - 0.5) * 18,
       y: parent.y + (Math.random() - 0.5) * 18,
       pathIndex: Math.max(0, parent.pathIndex - 1),
-      hp: def.hp * 0.75,
-      maxHp: def.hp * 0.75,
-      speed: def.speed * 1.1,
-      baseSpeed: def.speed * 1.1,
+      hp: scaledHp,
+      maxHp: scaledHp,
+      speed: scaledSpeed * 1.1,
+      baseSpeed: scaledSpeed * 1.1,
       reward: def.reward,
       color: def.color,
       size: def.size,
@@ -1009,6 +1589,7 @@ export class GameEngine {
       stunTimer: 0,
       burnTimer: 0,
       burnDmg: 0,
+      stunCooldown: 0,
       spawnsOnDeath: null,
       spawnCount: 0,
       distanceTraveled: parent.distanceTraveled,
@@ -1025,6 +1606,9 @@ export class GameEngine {
       requiresCounter: null,
       counterNote: "",
       burnStacks: 0,
+      assistTowers: new Set(),
+      stunImmunity: 0,
+      rageTimer: 0,
     });
   }
 
@@ -1057,17 +1641,32 @@ export class GameEngine {
     for (const tower of this.towers) {
       // Silenced tower check
       if (tower.type === this.silencedTowerType) continue;
+      if (tower.disabled) continue;
       if (tower.cooldown > 0) {
         tower.cooldown--;
         continue;
       }
 
+      // ── GLOBAL REVEAL ───────────────────────────────
+      const globalReveal = this.towers.some((t) =>
+        t.specials?.includes("allReveal"),
+      );
+
       // ── TESLA: immediate hit, arc bolt visuals, no projectile object ──────
       if (tower.type === "tesla") {
+        const teslaCanHitStealth =
+          synergyTeslaReveal ||
+          globalReveal ||
+          tower.specials?.includes("fullPierce"); // ← Thundergod now works
+
         const inRange = this.enemies
           .filter((e) => {
-            if (e.stealth && !synergyTeslaReveal) return false;
-            if (e.immunities.includes("tesla")) return false;
+            if (e.stealth && !teslaCanHitStealth) return false;
+
+            const hasPierce =
+              tower.specials?.includes("shieldPierce") ||
+              tower.specials?.includes("fullPierce");
+            if (e.immunities.includes("tesla") && !hasPierce) return false;
             return (
               Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2) <=
               tower.range * modRangeMult
@@ -1075,11 +1674,58 @@ export class GameEngine {
           })
           .sort((a, b) => b.distanceTraveled - a.distanceTraveled)
           .slice(0, (tower.chainTargets || 3) + 1);
+
+        // ── Range check FIRST — nothing below fires without targets ──────────
         if (inRange.length === 0) continue;
+
         tower.cooldown = Math.max(
           1,
           Math.round(tower.fireRate * fireRateMult * modFireRateMult),
         );
+        tower._shotCount = (tower._shotCount || 0) + 1;
+
+        // ── ARC PULSE: every 5th tesla fire = full-screen pulse ──────────────────
+        if (
+          tower.specials?.includes("arcPulse") &&
+          tower._shotCount % 5 === 0
+        ) {
+          for (const e of this.enemies) {
+            this._damageEnemy(e, tower.damage * 1.5, {
+              towerType: "tesla",
+              towerId: tower.id,
+              armorPiercing: true,
+              specials: [],
+            });
+            this._addBolt(tower.x, tower.y, e.x, e.y, tower.color);
+          }
+          this._triggerShake(6, 8);
+          this._addFloatingText(
+            tower.x,
+            tower.y - 30,
+            "💀 ARC PULSE!",
+            "#fbbf24",
+          );
+        }
+
+        // ── BALL LIGHTNING: every 8th tesla fire spawns a roaming orb ────────────
+        if (tower.specials?.includes("ballLightning")) {
+          tower._blCount = (tower._blCount || 0) + 1;
+          if (tower._blCount % 8 === 0) {
+            this.ballLightnings.push({
+              x: tower.x,
+              y: tower.y,
+              vx: (Math.random() - 0.5) * 2,
+              vy: (Math.random() - 0.5) * 2,
+              timer: 300,
+              damage: tower.damage * 0.6,
+              zapRadius: 60,
+              zapCooldown: 0,
+              color: tower.color,
+              towerId: tower.id,
+            });
+          }
+        }
+
         const dmg = tower.damage * damageMult;
         inRange.forEach((e, idx) => {
           const chainDmg = idx === 0 ? dmg : dmg * 0.7;
@@ -1105,20 +1751,262 @@ export class GameEngine {
         continue;
       }
 
-      // ── All other towers: fire a projectile ───────────────────────────────
+      // ── CYCLONE: spinning continuous AoE damage + pull around vortex ─────────
+      if (tower.specials?.includes("cyclone") && this.tick % 15 === 0) {
+        const spinRadius = tower.range * 0.65; // tighter than full range
+        const spinDmg = tower.damage * 0.15; // light per-tick, adds up fast
+        const spinAngle = (this.tick * 0.08) % (Math.PI * 2); // rotating phase
+
+        for (const e of this.enemies) {
+          const dx = e.x - tower.x,
+            dy = e.y - tower.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > spinRadius || dist < 4) continue;
+
+          // Damage
+          this._damageEnemy(e, spinDmg, {
+            towerType: "vortex",
+            towerId: tower.id,
+            armorPiercing: false,
+            specials: [],
+          });
+
+          // Tangential push — enemies orbit around the tower instead of just getting pulled
+          const normalAng = Math.atan2(dy, dx);
+          const tangentAng = normalAng + Math.PI / 2; // perpendicular = orbital
+          const spinForce = 1.8 * (1 - dist / spinRadius);
+
+          e.x += Math.cos(tangentAng) * spinForce;
+          e.y += Math.sin(tangentAng) * spinForce;
+
+          // Also slight inward pull so enemies don't just fly out
+          e.x -= (dx / dist) * spinForce * 0.4;
+          e.y -= (dy / dist) * spinForce * 0.4;
+
+          // Clamp to canvas
+          e.x = Math.max(0, Math.min(this.canvas.width, e.x));
+          e.y = Math.max(0, Math.min(this.canvas.height, e.y));
+        }
+
+        // Visual: spinning bolt ring every 15 ticks
+        for (let i = 0; i < 3; i++) {
+          const a = spinAngle + i * ((Math.PI * 2) / 3);
+          const bx = tower.x + Math.cos(a) * spinRadius;
+          const by = tower.y + Math.sin(a) * spinRadius;
+          this._addBolt(tower.x, tower.y, bx, by, tower.color);
+        }
+      }
+
+      // ── HELLGATE: continuous damage + burn in range ───────────────────────────
+      if (tower.specials?.includes("hellgate") && this.tick % 20 === 0) {
+        for (const e of this.enemies) {
+          if (e.immunities.includes("inferno")) continue;
+          const d = Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2);
+          if (d <= tower.range) {
+            // Continuous damage — doesn't need a projectile
+            this._damageEnemy(e, tower.damage * 0.45, {
+              towerType: "inferno",
+              towerId: tower.id,
+              armorPiercing: false,
+              specials: [],
+              burnDamage: tower.burnDamage * 2,
+              burnDuration: tower.burnDuration,
+            });
+          }
+        }
+      }
+
+      // ── BURN AURA: Inferno — passively burn all in range ─────────────────────
+      if (tower.specials?.includes("burnAura") && this.tick % 40 === 0) {
+        for (const e of this.enemies) {
+          if (e.immunities.includes("inferno")) continue;
+          const d = Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2);
+          if (d <= tower.range) {
+            e.burnTimer = Math.max(e.burnTimer, 80);
+            e.burnDmg = Math.max(e.burnDmg, tower.burnDamage || 3);
+            e.burnSourceId = tower.id;
+          }
+        }
+      }
+
+      // ── METEOR STORM: random blasts in range every 30 ticks ──────────────────
+      if (tower.specials?.includes("meteorStorm") && this.tick % 30 === 0) {
+        // Pick a random enemy in range and deal a small blast
+        const candidates = this.enemies.filter((e) => {
+          return (
+            Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2) <=
+            tower.range * 1.5
+          );
+        });
+        if (candidates.length > 0) {
+          const target =
+            candidates[Math.floor(Math.random() * candidates.length)];
+          this._damageEnemy(target, tower.damage * 0.6, {
+            towerType: "cannon",
+            towerId: tower.id,
+            armorPiercing: false,
+            specials: [],
+          });
+          this._dealSplashDamage(
+            {
+              ...{ x: target.x, y: target.y },
+              towerType: "cannon",
+              towerId: tower.id,
+              damage: tower.damage * 0.4,
+              splash: tower.splash * 0.5,
+              pullForce: 0,
+              specials: [],
+            },
+            target,
+          );
+          this._addParticles(target.x, target.y, tower.projectileColor, 10);
+          this._addFloatingText(target.x, target.y - 10, "🌠", "#f97316");
+        }
+      }
+
+      // ── ARMAGEDDON: hits ALL enemies every 3 seconds ─────────────────────────
+      if (
+        tower.specials?.includes("armageddon") &&
+        this.tick % 300 === 0 &&
+        this.enemies.length > 0
+      ) {
+        for (const e of this.enemies) {
+          if (e.immunities.includes("missile")) continue;
+          this._damageEnemy(e, tower.damage, {
+            towerType: "missile",
+            towerId: tower.id,
+            armorPiercing: false,
+            splash: tower.splash,
+            specials: [],
+          });
+          this._addParticles(e.x, e.y, tower.projectileColor, 8);
+        }
+        this._triggerShake(6, 8);
+        this._addFloatingText(
+          tower.x,
+          tower.y - 30,
+          "💢 ARMAGEDDON!",
+          "#f43f5e",
+        );
+      }
+
       let target = null;
-      for (const enemy of this.enemies) {
-        if (enemy.stealth && tower.type !== "laser") continue;
-        if (enemy.immunities.includes(tower.type)) continue;
-        const dx = enemy.x - tower.x,
-          dy = enemy.y - tower.y;
-        if (Math.sqrt(dx * dx + dy * dy) <= tower.range * modRangeMult) {
-          if (!target || enemy.distanceTraveled > target.distanceTraveled)
-            target = enemy;
+
+      if (tower.type === "missile") {
+        // Missiles lock onto highest HP enemy in range
+        for (const enemy of this.enemies) {
+          if (enemy.stealth) continue; // missiles can't see stealth
+          if (enemy.immunities.includes("missile")) continue;
+          const dx = enemy.x - tower.x,
+            dy = enemy.y - tower.y;
+          if (Math.sqrt(dx * dx + dy * dy) <= tower.range * modRangeMult) {
+            if (!target || enemy.hp > target.hp) target = enemy;
+          }
+        }
+      } else {
+        for (const enemy of this.enemies) {
+          const canTargetStealth =
+            tower.type === "laser" ||
+            globalReveal ||
+            tower.specials?.includes("fullPierce") ||
+            tower.specials?.includes("trueDamage");
+          if (enemy.stealth && !canTargetStealth) continue;
+
+          if (enemy.immunities.includes(tower.type)) continue;
+          const dx = enemy.x - tower.x,
+            dy = enemy.y - tower.y;
+          if (Math.sqrt(dx * dx + dy * dy) <= tower.range * modRangeMult) {
+            if (!target || enemy.distanceTraveled > target.distanceTraveled)
+              target = enemy;
+          }
         }
       }
       if (!target) continue;
-      this._fireProjectile(tower, target, damageMult);
+
+      // ── Laser: rapid beam — beamAll hits all enemies in range ────────────
+      if (tower.type === "laser") {
+        const beamAll = tower.specials?.includes("beamAll");
+        const modRange = tower.range * modRangeMult;
+
+        const targets = this.enemies
+          .filter((e) => {
+            if (e.immunities.includes("laser")) return false;
+            const inRange =
+              Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2) <=
+              modRange;
+            if (!inRange) return false;
+            // stealth: laser always hits, or synergyReveal
+            return true;
+          })
+          .sort((a, b) => b.distanceTraveled - a.distanceTraveled);
+
+        if (targets.length === 0) continue;
+        this._fireProjectile(tower, targets[0], damageMult);
+        tower.cooldown = Math.max(
+          1,
+          Math.round(tower.fireRate * fireRateMult * modFireRateMult),
+        );
+
+        // beamAll: instant damage to all other enemies in range at 25% power
+        if (beamAll && targets.length > 1) {
+          for (let bi = 1; bi < targets.length; bi++) {
+            this._damageEnemy(targets[bi], tower.damage * damageMult * 0.25, {
+              towerType: "laser",
+              towerId: tower.id,
+              armorPiercing: false,
+              specials: tower.specials,
+            });
+            this._addBolt(
+              tower.x,
+              tower.y,
+              targets[bi].x,
+              targets[bi].y,
+              tower.color,
+            );
+          }
+        }
+
+        // omegeBeam
+        if (tower.specials?.includes("omegaBeam") && this.tick % 25 === 0) {
+          for (const e of this.enemies) {
+            if (e.immunities.includes("laser")) continue;
+            this._damageEnemy(e, tower.damage * 0.8, {
+              towerType: "laser",
+              towerId: tower.id,
+              armorPiercing: false,
+              specials: [],
+            });
+            this._addBolt(tower.x, tower.y, e.x, e.y, tower.color);
+          }
+        }
+
+        // prismSplit — must be inside laser block because laser `continue`s
+        if (tower.specials?.includes("prismSplit")) {
+          const prismExtra = this.enemies
+            .filter((e) => {
+              if (e.id === target.id) return false;
+              if (e.immunities.includes("laser")) return false;
+              return (
+                Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2) <=
+                tower.range * modRangeMult
+              );
+            })
+            .sort((a, b) => b.distanceTraveled - a.distanceTraveled)
+            .slice(0, 2);
+          for (const pe of prismExtra) {
+            this._damageEnemy(pe, tower.damage * damageMult * 0.6, {
+              towerType: "laser",
+              towerId: tower.id,
+              armorPiercing: false,
+              specials: [],
+            });
+            this._addBolt(tower.x, tower.y, pe.x, pe.y, "#e879f9");
+          }
+        }
+
+        continue;
+      } else this._fireProjectile(tower, target, damageMult);
+
       tower.cooldown = Math.max(
         1,
         Math.round(tower.fireRate * fireRateMult * modFireRateMult),
@@ -1158,6 +2046,8 @@ export class GameEngine {
       id: Date.now() + Math.random(),
       x: tower.x,
       y: tower.y,
+      originX: tower.x,
+      originY: tower.y,
       vx: (dx / dist) * tower.projectileSpeed,
       vy: (dy / dist) * tower.projectileSpeed,
       damage: tower.damage * dmgMult,
@@ -1171,13 +2061,298 @@ export class GameEngine {
       burnDuration: tower.burnDuration || 0,
       armorPiercing: tower.armorPiercing || false,
       pullForce: tower.pullForce || 0,
+      projectileSpeed: tower.projectileSpeed || 5,
+      homing: tower?.homing || false,
       towerId: tower.id,
       towerType: tower.type,
       targetId: target.id,
       size: tower.type === "cannon" || tower.type === "vortex" ? 6 : 4,
       specials: tower.specials || [],
       hasShatterSyn,
+      maxTravelDist: (() => {
+        switch (tower.type) {
+          case "laser":
+            return tower.range * 1.08; // very tight — beam stops at range
+          case "sniper":
+            return tower.range * 1.4; // long range already, small grace
+          case "basic":
+            return tower.range * 1.3; // bullets, moderate grace
+          case "cannon":
+            return tower.range * 1.35; // slow projectile, some arc grace
+          case "freeze":
+            return tower.range * 1.25; // slow crystal, tight
+          case "inferno":
+            return tower.range * 1.3; // fireball
+          case "vortex":
+            return tower.range * 1.3; // orb
+          case "missile":
+            return tower.range * 1.6; // homing gets most grace
+          default:
+            return tower.range * 1.35;
+        }
+      })(),
+      travelDist: 0,
+      _baseTowerDamage: tower.damage,
+      _targetWasVisible: !target.stealth,
     });
+
+    if (tower.specials?.includes("allReveal") && tower.type === "sniper") {
+      // Mark the projectile: sniper crits on revealed stealth targets ignore armor
+      const proj = this.projectiles[this.projectiles.length - 1];
+      if (target.stealth) proj.armorPiercing = true;
+    }
+
+    // ── BLACK HOLE: every 10th shot spawns a gravity well ───────────────────
+    if (tower.specials?.includes("blackHole") && tower._shotCount % 10 === 0) {
+      this.blackHoles.push({
+        x: target.x,
+        y: target.y,
+        timer: 180, // 3 seconds
+        radius: 100,
+        strength: 3.5,
+      });
+      this._addFloatingText(
+        target.x,
+        target.y - 20,
+        "🌌 BLACK HOLE!",
+        "#818cf8",
+      );
+      this._addParticles(target.x, target.y, "#818cf8", 30);
+    }
+
+    // ── BIG CRUNCH: every 5th shot pulls ALL enemies to tower ────────────────
+    if (tower.specials?.includes("bigCrunch") && tower._shotCount % 10 === 0) {
+      for (const e of this.enemies) {
+        if (e.isBoss) continue; // bosses only get visual shake, no setback
+        const activePath = e._altPath ?? this.path;
+        // Walk the enemy back ~6 path steps (≈ one full screen segment)
+        const stepsBack = Math.min(6, e.pathIndex);
+        if (stepsBack > 0) {
+          e.pathIndex = Math.max(0, e.pathIndex - stepsBack);
+          e.x = activePath[e.pathIndex].x;
+          e.y = activePath[e.pathIndex].y;
+          e.distanceTraveled = Math.max(
+            0,
+            e.distanceTraveled - stepsBack * CELL_SIZE,
+          );
+        }
+      }
+      // Keep bosses as visual-only pull
+      for (const e of this.enemies) {
+        if (!e.isBoss) continue;
+        const dx = tower.x - e.x,
+          dy = tower.y - e.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        e.x += (dx / dist) * 30;
+        e.y += (dy / dist) * 30;
+        e.x = Math.max(0, Math.min(this.canvas.width, e.x));
+        e.y = Math.max(0, Math.min(this.canvas.height, e.y));
+      }
+      this._triggerShake(8, 12);
+      this._addFloatingText(tower.x, tower.y - 30, "🌑 BIG CRUNCH!", "#818cf8");
+      this._addParticles(tower.x, tower.y, "#818cf8", 50);
+    }
+
+    // ── SUPERNOVA: every 6th shot — massive burn AOE ─────────────────────────
+    if (tower.specials?.includes("supernova") && tower._shotCount % 6 === 0) {
+      for (const e of this.enemies) {
+        const d = Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2);
+        if (d <= tower.range * 2) {
+          e.burnTimer = Math.max(e.burnTimer, 300);
+          e.burnDmg = Math.max(e.burnDmg, tower.burnDamage * 3 || 15);
+          e.burnSourceId = tower.id;
+          e.burnStacks = Math.min(3, (e.burnStacks || 0) + 1);
+        }
+      }
+      this._addParticles(tower.x, tower.y, "#ef4444", 50);
+      this._addFloatingText(tower.x, tower.y - 30, "💢 SUPERNOVA!", "#ef4444");
+    }
+
+    // ── SOLAR BLIND: every 10th shot slows all enemies ───────────────────────
+    if (
+      tower.specials?.includes("solarBlind") &&
+      tower._shotCount > 0 &&
+      tower._shotCount % 10 === 0
+    ) {
+      // Blind = slows all enemies (no stealth targeting = effectively blinded)
+      for (const e of this.enemies) {
+        if (!e._solarBlindCooldown) {
+          e.slowTimer = Math.max(e.slowTimer, 60); // 1s slow, was 2s
+          e._solarBlindCooldown = 180; // 3s before same enemy can be re-blinded
+        }
+      }
+      this._addFloatingText(
+        this.canvas.width / 2,
+        this.canvas.height / 2 - 20,
+        "☀️ SOLAR FLARE!",
+        "#fbbf24",
+      );
+      this._addParticles(
+        this.canvas.width / 2,
+        this.canvas.height / 2,
+        "#fbbf24",
+        40,
+      );
+    }
+
+    // ── TWIN SHOT: sniper fires a second simultaneous shot ────────────────────
+    if (tower.specials?.includes("twinShot") && tower.type === "sniper") {
+      const offset = 0.12;
+      const mainAng = Math.atan2(dy, dx);
+      const base = this.projectiles[this.projectiles.length - 1];
+      this.projectiles.push({
+        ...base,
+        id: Date.now() + Math.random() + 0.2,
+        vx: Math.cos(mainAng + offset) * tower.projectileSpeed,
+        vy: Math.sin(mainAng + offset) * tower.projectileSpeed,
+        homing: true,
+        targetId: target.id,
+        _twinShot: true,
+        _targetWasVisible: !target.stealth,
+        maxTravelDist: tower.range * 1.4,
+      });
+    }
+
+    // ── SALVO: second homing missile at a different target ────────────────────
+    if (tower.specials?.includes("salvo")) {
+      // Pick second target — best enemy that isn't the primary target
+      const secondTarget =
+        this.enemies
+          .filter((e) => {
+            if (e.id === target.id) return false;
+            if (e.stealth && tower.type !== "laser") return false;
+            if (e.immunities.includes(tower.type)) return false;
+            return (
+              Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2) <=
+              tower.range
+            );
+          })
+          .sort((a, b) => b.distanceTraveled - a.distanceTraveled)[0] || target; // fallback same target
+
+      const dx2 = secondTarget.x - tower.x,
+        dy2 = secondTarget.y - tower.y;
+      const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+      this.projectiles.push({
+        ...this.projectiles[this.projectiles.length - 1],
+        id: Date.now() + Math.random() + 0.1,
+        vx: (dx2 / dist2) * tower.projectileSpeed,
+        vy: (dy2 / dist2) * tower.projectileSpeed,
+        targetId: secondTarget.id,
+        homing: true, // ensure it homes
+        _isSalvo: true,
+        maxTravelDist: tower.range * 1.6,
+      });
+    }
+
+    // ── SMART SWARM: replace primary shot with 6 homing missiles ─────────────
+    if (tower.specials?.includes("smartSwarm")) {
+      const swarmCandidates = this.enemies
+        .filter((e) => {
+          if (e.stealth && tower.type !== "laser") return false;
+          if (e.immunities.includes(tower.type)) return false;
+          return (
+            Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2) <=
+            tower.range * 1.5
+          );
+        })
+        .sort((a, b) => b.distanceTraveled - a.distanceTraveled)
+        .slice(0, 6);
+
+      if (swarmCandidates.length > 0) {
+        this.projectiles.pop(); // remove the primary shot
+        for (let si = 0; si < swarmCandidates.length; si++) {
+          const st = swarmCandidates[si];
+          const sdx = st.x - tower.x,
+            sdy = st.y - tower.y;
+          // const sdist = Math.sqrt(sdx * sdx + sdy * sdy) || 1;
+          const spread = (si - (swarmCandidates.length - 1) / 2) * 0.1;
+          const ang = Math.atan2(sdy, sdx) + spread;
+          this.projectiles.push({
+            id: Date.now() + Math.random() + si * 0.01,
+            x: tower.x,
+            y: tower.y,
+            vx: Math.cos(ang) * tower.projectileSpeed,
+            vy: Math.sin(ang) * tower.projectileSpeed,
+            damage: tower.damage * damageMult * 0.55,
+            color: tower.projectileColor,
+            splash: (tower.splash || 0) * 0.6,
+            slowFactor: 0,
+            slowDuration: 0,
+            chainTargets: 0,
+            chainRange: 0,
+            burnDamage: 0,
+            burnDuration: 0,
+            armorPiercing: tower.armorPiercing || false,
+            pullForce: 0,
+            homing: true,
+            towerId: tower.id,
+            towerType: tower.type,
+            targetId: st.id,
+            size: 4,
+            projectileSpeed: tower.projectileSpeed,
+            specials: tower.specials.filter((s) => s !== "smartSwarm"),
+            hasShatterSyn: false,
+            _isSwarm: true,
+            maxTravelDist: tower.range * 1.6,
+          });
+        }
+      }
+    }
+
+    // ── NUCLEAR PAYLOAD: every 5th missile shot = full screen nuke blast
+    tower._shotCount = (tower._shotCount || 0) + 1;
+    if (
+      (tower.specials?.includes("nuclearPayload") ||
+        tower.specials?.includes("nuke")) &&
+      tower._shotCount % (tower.specials?.includes("nuke") ? 8 : 5) === 0
+    ) {
+      // Nuke: deal massive AoE damage to all enemies
+      setTimeout(() => {
+        for (const e of this.enemies) {
+          this._damageEnemy(e, tower.damage * 4, {
+            towerType: tower.type,
+            towerId: tower.id,
+            armorPiercing: true,
+            specials: [],
+          });
+        }
+        this._triggerShake(10, 20);
+        this._addFloatingText(
+          this.canvas.width / 2,
+          this.canvas.height / 2 - 40,
+          "☢️ NUKE!",
+          "#ef4444",
+        );
+        this._addParticles(
+          this.canvas.width / 2,
+          this.canvas.height / 2,
+          "#ef4444",
+          80,
+        );
+      }, 200); // slight delay for dramatic effect
+    }
+
+    // ── TIME STOP: every 5th shot freezes all enemies ────────────────────────
+    if (tower.specials?.includes("timeStop") && tower._shotCount % 5 === 0) {
+      for (const e of this.enemies) {
+        if (!e.immunities.includes("freeze") && e.stunCooldown <= 0) {
+          e.stunTimer = Math.max(e.stunTimer, e.isBoss ? 60 : 120);
+          e.stunCooldown = e.isBoss ? 120 : 60;
+        }
+      }
+      this._addFloatingText(
+        this.canvas.width / 2,
+        this.canvas.height / 2,
+        "⏱ TIME STOP!",
+        "#a5f3fc",
+      );
+      this._addParticles(
+        this.canvas.width / 2,
+        this.canvas.height / 2,
+        "#a5f3fc",
+        30,
+      );
+    }
 
     // store last fire angle for barrel drawing
     tower._drawAngle =
@@ -1185,10 +2360,70 @@ export class GameEngine {
   }
 
   _updateProjectiles() {
+    const globalReveal = this.towers.some((t) =>
+      t.specials?.includes("allReveal"),
+    );
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.x += p.vx;
       p.y += p.vy;
+
+      // Range cap — laser and future ranged-limit projectiles self-destruct
+      if (p.maxTravelDist > 0) {
+        p.travelDist =
+          (p.travelDist || 0) + Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+        if (p.travelDist > p.maxTravelDist) {
+          this.projectiles.splice(i, 1);
+          continue;
+        }
+      }
+
+      // homing missile
+      if (p.homing) {
+        let target = p.targetId
+          ? this.enemies.find((e) => e.id === p.targetId)
+          : null;
+
+        if (!target) {
+          // All homing projectiles re-acquire — missiles never "miss"
+          // Primary missile re-targets highest HP, seekers/swarm take nearest
+          const isMissile =
+            p.towerType === "missile" &&
+            !p._isSalvo &&
+            !p._isSwarm &&
+            !p._isSeeker;
+          target = this.enemies
+            .filter((e) => {
+              if (e.stealth && p.towerType !== "laser") return false;
+              if (e.immunities.includes(p.towerType)) return false;
+              if (p.piercedEnemies?.has(e.id)) return false;
+              return true;
+            })
+            .sort((a, b) =>
+              isMissile
+                ? b.hp - a.hp // re-acquire highest HP on target death
+                : (a.x - p.x) ** 2 +
+                  (a.y - p.y) ** 2 -
+                  ((b.x - p.x) ** 2 + (b.y - p.y) ** 2),
+            )[0];
+          if (target) p.targetId = target.id;
+        }
+
+        if (target) {
+          const dx = target.x - p.x,
+            dy = target.y - p.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const turnRate = 0.55;
+          p.vx += ((dx / dist) * p.projectileSpeed - p.vx) * turnRate;
+          p.vy += ((dy / dist) * p.projectileSpeed - p.vy) * turnRate;
+          const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+          if (speed > 0) {
+            p.vx = (p.vx / speed) * p.projectileSpeed;
+            p.vy = (p.vy / speed) * p.projectileSpeed;
+          }
+        }
+      }
+
       if (
         p.x < -20 ||
         p.x > this.canvas.width + 20 ||
@@ -1200,83 +2435,421 @@ export class GameEngine {
       }
 
       let hit = false;
+      const isPiercing =
+        p.specials?.includes("pierceThrough") ||
+        p.specials?.includes("fullPierce");
+      if (!p.piercedEnemies) p.piercedEnemies = new Set();
+
       for (let j = this.enemies.length - 1; j >= 0; j--) {
         const e = this.enemies[j];
-        if (e.stealth && p.towerType !== "laser") continue;
-        if (e.immunities.includes(p.towerType)) continue;
+
+        // stealth check — fullPierce and trueDamage can hit stealth
+        const canHitStealth =
+          p.towerType === "laser" ||
+          p.specials?.includes("fullPierce") ||
+          p.specials?.includes("trueDamage") ||
+          globalReveal ||
+          (p.targetId === e.id && p._targetWasVisible);
+
+        if (e.stealth && !canHitStealth) continue;
+        const bypassesImmunity =
+          p.specials?.includes("fullPierce") ||
+          p.specials?.includes("shieldPierce");
+        if (e.immunities.includes(p.towerType) && !bypassesImmunity) continue;
+        if (isPiercing && p.piercedEnemies.has(e.id)) continue;
+
         const dx = e.x - p.x,
           dy = e.y - p.y,
           dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < e.size + p.size) {
           hit = true;
-          if (p.splash > 0 || p.pullForce > 0) {
-            for (const se of this.enemies) {
-              if (se.immunities.includes(p.towerType)) continue;
-              const sd = Math.sqrt((se.x - p.x) ** 2 + (se.y - p.y) ** 2);
-              if (sd < p.splash) {
-                let dmg = p.damage * (1 - (sd / p.splash) * 0.5);
-                // Shatter synergy: slowed enemies take +50% from cannon splash
-                if (
-                  p.hasShatterSyn &&
-                  p.towerType === "cannon" &&
-                  se.slowTimer > 0
-                )
-                  dmg *= 1.5;
-                this._damageEnemy(se, dmg, p);
-                if (p.pullForce > 0 && sd > 2) {
-                  const ang = Math.atan2(p.y - se.y, p.x - se.x);
-                  se.x += Math.cos(ang) * p.pullForce * (1 - sd / p.splash);
-                  se.y += Math.sin(ang) * p.pullForce * (1 - sd / p.splash);
-                  if (p.towerId) se.assistTowers?.add(p.towerId);
-                }
-              }
+          if (isPiercing) {
+            // Don't stop — record hit and continue
+            p.piercedEnemies.add(e.id);
+            if (p.splash > 0 || p.pullForce > 0) {
+              this._dealSplashDamage(p, e);
+            } else {
+              this._damageEnemy(e, p.damage, p);
+              if (p.chainTargets > 0)
+                this._chainLightning(e, p, p.chainTargets);
             }
-            if (p.towerType === "vortex" && p.pullForce > 0) {
-              const vt = this.towers.find((t) => t.id === p.towerId);
-              if (vt) {
-                vt._wavePulls = (vt._wavePulls || 0) + 1;
-              }
-            }
-            this._addParticles(p.x, p.y, p.color, 14);
+            // Don't break — piercing continues
           } else {
-            this._damageEnemy(e, p.damage, p);
-            if (p.chainTargets > 0) this._chainLightning(e, p, p.chainTargets);
+            if (p.splash > 0 || p.pullForce > 0) {
+              this._dealSplashDamage(p, e);
+            } else {
+              this._damageEnemy(e, p.damage, p);
+              if (p.chainTargets > 0)
+                this._chainLightning(e, p, p.chainTargets);
+            }
+            // Teleport-back special
+            if (p.specials?.includes("teleportBack")) {
+              e.pathIndex = Math.max(0, Math.floor(this.path.length * 0.2));
+              e.x = this.path[e.pathIndex].x;
+              e.y = this.path[e.pathIndex].y;
+              this._addFloatingText(
+                e.x,
+                e.y - 20,
+                "TELEPORTED BACK!",
+                "#818cf8",
+              );
+            }
+            break;
           }
-          // Teleport-back special
-          if (p.specials?.includes("teleportBack")) {
-            e.pathIndex = Math.max(0, Math.floor(this.path.length * 0.2));
-            e.x = this.path[e.pathIndex].x;
-            e.y = this.path[e.pathIndex].y;
-            this._addFloatingText(e.x, e.y - 20, "TELEPORTED BACK!", "#818cf8");
-          }
-          break;
         }
       }
       if (hit) {
-        this._addParticles(p.x, p.y, p.color, 5);
-        this.projectiles.splice(i, 1);
+        const hitParticles =
+          p.towerType === "missile"
+            ? 28
+            : p.towerType === "cannon"
+              ? 16
+              : isPiercing
+                ? 2
+                : 5;
+        this._addParticles(p.x, p.y, p.color, hitParticles);
+        if (p.towerType === "missile") this._triggerShake(3, 4);
+        if (!isPiercing) this.projectiles.splice(i, 1);
       }
     }
   }
 
-  // _chainLightning removed — Tesla now chains directly in _updateTowers
-  // using immediate-hit arc bolt logic (no projectile object needed)
+  _dealSplashDamage(p, primaryEnemy) {
+    for (const se of this.enemies) {
+      if (
+        se.immunities.includes(p.towerType) &&
+        !p.specials?.includes("fullPierce")
+      )
+        continue;
+
+      const sd = Math.sqrt((se.x - p.x) ** 2 + (se.y - p.y) ** 2);
+      if (sd < p.splash) {
+        // Primary enemy gets full damage, surrounding enemies get falloff
+        let dmg =
+          se.id === primaryEnemy.id
+            ? p.damage
+            : p.damage * (1 - (sd / p.splash) * 0.5);
+
+        const hasShatterSyn = this.activeSynergies.some(
+          (s) => s.key === "freeze_cannon",
+        );
+        if (hasShatterSyn && p.towerType === "cannon" && se.slowTimer > 0)
+          dmg *= 1.5;
+
+        this._damageEnemy(se, dmg, p);
+
+        if (p.pullForce > 0 && sd > 2) {
+          const ang = Math.atan2(p.y - se.y, p.x - se.x);
+          const effectivePull = p.pullForce * (1 - sd / p.splash);
+          se.x += Math.cos(ang) * effectivePull;
+          se.y += Math.sin(ang) * effectivePull;
+
+          // Path setback — strong pulls move enemies back on the route
+          // This is what makes vortex feel impactful vs just displacing XY
+          if (effectivePull >= 1.5 && !se.isBoss && se.pathIndex > 0) {
+            const stepsBack = Math.min(
+              Math.floor(effectivePull / 2.5),
+              Math.floor(se.pathIndex * 0.25), // cap at 25% of progress
+            );
+            if (stepsBack > 0) {
+              se.pathIndex = Math.max(0, se.pathIndex - stepsBack);
+              se.x = this.path[se.pathIndex].x;
+              se.y = this.path[se.pathIndex].y;
+              se.distanceTraveled = Math.max(
+                0,
+                se.distanceTraveled - stepsBack * 12,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // ── DARK STAR DEBUFF: enemies pulled by vortex take 3× damage ────────────
+    if (p.specials?.includes("darkStarDebuff") && p.pullForce > 0) {
+      for (const se of this.enemies) {
+        const d = Math.sqrt((se.x - p.x) ** 2 + (se.y - p.y) ** 2);
+        if (d < p.splash) se._darkStarDebuffTimer = 180;
+      }
+    }
+
+    // ── BURN ON SPLASH: Napalm cannon leaves burning ground zone
+    if (p.specials?.includes("burnOnSplash")) {
+      this.burnZones.push({
+        x: p.x,
+        y: p.y,
+        radius: (p.splash || 65) * 0.7,
+        damage: 2,
+        timer: 180, // 3 seconds
+        color: "#ef4444",
+      });
+    }
+
+    if (p.towerType === "vortex" && p.pullForce > 0) {
+      const vt = this.towers.find((t) => t.id === p.towerId);
+      if (vt) vt._wavePulls = (vt._wavePulls || 0) + 1;
+    }
+
+    this._addParticles(p.x, p.y, p.color, 14);
+  }
+
+  _chainLightning(primaryEnemy, proj, remainingChains) {
+    if (remainingChains <= 0) return;
+
+    // Find nearby enemies to chain to, excluding the primary
+    const chainCandidates = this.enemies
+      .filter((e) => {
+        if (e.id === primaryEnemy.id) return false;
+        if (e.immunities.includes(proj.towerType)) return false;
+        if (e.stealth && proj.towerType !== "laser") return false;
+        const dx = e.x - primaryEnemy.x;
+        const dy = e.y - primaryEnemy.y;
+        return Math.sqrt(dx * dx + dy * dy) <= (proj.chainRange || 80);
+      })
+      .sort((a, b) => {
+        // Prioritize closest enemies (mirrors splash falloff logic)
+        const da = Math.sqrt(
+          (a.x - primaryEnemy.x) ** 2 + (a.y - primaryEnemy.y) ** 2,
+        );
+        const db = Math.sqrt(
+          (b.x - primaryEnemy.x) ** 2 + (b.y - primaryEnemy.y) ** 2,
+        );
+        return da - db;
+      })
+      .slice(0, remainingChains);
+
+    for (const chainTarget of chainCandidates) {
+      const dist = Math.sqrt(
+        (chainTarget.x - primaryEnemy.x) ** 2 +
+          (chainTarget.y - primaryEnemy.y) ** 2,
+      );
+      const chainRange = proj.chainRange || 80;
+
+      // Mirror _dealSplashDamage falloff: damage * (1 - (dist / range) * 0.5)
+      // Primary already received full damage — chain targets get falloff
+      const falloff = 1 - (dist / chainRange) * 0.5;
+      const chainDmg = proj.damage * Math.max(0.5, falloff); // floor at 50% like tesla's 0.7
+
+      this._damageEnemy(chainTarget, chainDmg, {
+        ...proj,
+        // Prevent recursive chaining from chain hits
+        chainTargets: 0,
+      });
+
+      // Visual arc bolt between hops
+      this._addBolt(
+        primaryEnemy.x,
+        primaryEnemy.y,
+        chainTarget.x,
+        chainTarget.y,
+        proj.color,
+      );
+
+      this._addParticles(chainTarget.x, chainTarget.y, proj.color, 3);
+    }
+  }
 
   _damageEnemy(enemy, rawDmg, proj) {
     let dmg = rawDmg;
     const effectiveXpMult = this.isEndless
       ? this.xpMult * Math.max(0.5, 1 - (this.wave - 1) * 0.005)
       : this.xpMult;
-    if (!proj?.armorPiercing) dmg *= 1 - enemy.armor;
+
+    // Dodge check (evolved fast enemies)
+    if (enemy.dodgeChance && Math.random() < enemy.dodgeChance) {
+      this._addFloatingText(enemy.x, enemy.y - 10, "DODGE", "#facc15");
+      return;
+    }
+
+    // darkStarDebuff: 3× damage from all sources while debuffed
+    if (enemy._darkStarDebuffTimer > 0) dmg *= 3;
+
+    // Determine damage type
+    const damageType = proj?.towerType
+      ? TOWER_TYPES[proj.towerType]?.damageType || "physical"
+      : "physical";
+    const isMagical = damageType === "magical";
+    const isHybrid = damageType === "hybrid";
+    const isTrueDmg =
+      proj?.specials?.includes("trueDamage") ||
+      proj?.specials?.includes("fullPierce");
+
+    // Armor calculation — magical bypasses most armor
+    if (!proj?.armorPiercing && !isTrueDmg) {
+      let effectiveArmor = enemy.armor;
+      if (enemy.piercingResist) effectiveArmor *= 1 - enemy.piercingResist;
+      if (isMagical)
+        effectiveArmor *= 0.35; // magic largely ignores armor
+      else if (isHybrid) effectiveArmor *= 0.6;
+      dmg *= 1 - effectiveArmor;
+    }
+
+    // ── SHATTER BUFF: frozen/slowed enemies take 2× damage ───────────────────
+    if (!isTrueDmg) {
+      const attackingTower = proj?.towerId
+        ? this.towers.find((t) => t.id === proj.towerId)
+        : null;
+      if (
+        attackingTower?.specials?.includes("shatterBuff") &&
+        (enemy.slowTimer > 0 || enemy.stunTimer > 0)
+      ) {
+        dmg *= 2;
+      }
+    }
+
+    // Type-specific resistances
+    if (!isTrueDmg) {
+      if (isMagical && enemy.magicalResist) dmg *= 1 - enemy.magicalResist;
+      if (!isMagical && !isHybrid && enemy.physicalResist)
+        dmg *= 1 - enemy.physicalResist;
+    }
+
+    // fullPierce / trueDamage can target stealth
+    if (isTrueDmg && enemy.stealth) {
+      // allowed to hit
+    }
+
+    // ── INSTANT FREEZE: Flash Freeze — first hit fully freezes ───────────────
+    if (
+      proj?.specials?.includes("instantFreeze") &&
+      !enemy._flashFrozen &&
+      !enemy.immunities.includes("freeze")
+    ) {
+      enemy.stunTimer = Math.max(enemy.stunTimer, enemy.isBoss ? 90 : 180);
+      enemy.slowTimer = 0;
+      enemy._flashFrozen = true; // only triggers once per enemy instance
+      this._addParticles(enemy.x, enemy.y, "#a5f3fc", 20);
+      this._addFloatingText(enemy.x, enemy.y - 16, "❄ FROZEN!", "#a5f3fc");
+    }
+
     // Armor melt special
     if (proj?.specials?.includes("armorMelt") && enemy.burnTimer > 0)
       enemy.armor = Math.max(0, enemy.armor - 0.4);
+
+    // Map bonus damage multiplier
+    if (this.activeMapBonus?.type === "damage") {
+      dmg *= 1 + this.activeMapBonus.value;
+    }
+
     enemy.hp -= dmg;
+
+    // ── OMEGA RIFT: teleport enemies back 50% of path ────────────────────────
+    if (proj?.specials?.includes("omegaRift")) {
+      const targetIdx = Math.floor(this.path.length * 0.5);
+      if (enemy.pathIndex > targetIdx) {
+        enemy.pathIndex = targetIdx;
+        enemy.x = this.path[targetIdx].x;
+        enemy.y = this.path[targetIdx].y;
+        this._addFloatingText(enemy.x, enemy.y - 20, "🌌 RIFT!", "#818cf8");
+        this._addParticles(enemy.x, enemy.y, "#818cf8", 20);
+      }
+    }
+
+    // ── CLUSTER SHOT: cannon — spawn 3 mini projectiles on impact ────────────
+    if (
+      proj?.specials?.includes("clusterShot") &&
+      !proj._isCluster &&
+      !proj._clusterFired
+    ) {
+      proj._clusterFired = true;
+      // Target enemies NOT already in the primary splash zone — spreads damage out
+      const baseDamage = proj._baseTowerDamage ?? proj.damage;
+      const nearby = this.enemies
+        .filter((e) => e.id !== enemy.id)
+        .sort((a, b) => {
+          // Sort by FURTHEST first — shards hunt enemies the splash didn't reach
+          const da = (a.x - enemy.x) ** 2 + (a.y - enemy.y) ** 2;
+          const db = (b.x - enemy.x) ** 2 + (b.y - enemy.y) ** 2;
+          return db - da; // ← reversed: furthest first
+        })
+        .slice(0, 3);
+      for (const t of nearby) {
+        const dx = t.x - enemy.x,
+          dy = t.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        this.projectiles.push({
+          id: Date.now() + Math.random(),
+          x: enemy.x,
+          y: enemy.y,
+          vx: (dx / dist) * (proj.projectileSpeed || 5),
+          vy: (dy / dist) * (proj.projectileSpeed || 5),
+          damage: baseDamage * 0.2, // 20% of BASE tower damage, no buff stacking
+          splash: 0, // no splash — precision strike only
+          color: proj.color,
+          size: 3,
+          towerType: proj.towerType,
+          towerId: proj.towerId,
+          armorPiercing: false,
+          projectileSpeed: (proj.projectileSpeed || 5) * 1.4, // faster than original
+          slowFactor: 0,
+          slowDuration: 0,
+          chainTargets: 0,
+          burnDamage: 0,
+          burnDuration: 0,
+          pullForce: 0,
+          homing: true, // homes in so it actually hits
+          targetId: t.id,
+          _isCluster: true,
+          specials: [],
+          hasShatterSyn: proj.hasShatterSyn,
+          piercedEnemies: new Set(),
+          maxTravelDist: 180,
+        });
+      }
+    }
+
+    // ── CLUSTER WARHEAD: missile splits into 4 homing shards on impact ────────
+    if (proj?.specials?.includes("clusterWarhead") && !proj._isWarheadShard) {
+      const shardCount = 4;
+      const shardBlastRadius = proj.splash || 100;
+
+      const candidates = this.enemies
+        .filter((e) => {
+          if (e.id === enemy.id) return false;
+          if (e.immunities.includes("missile")) return false;
+          const d = Math.sqrt((e.x - enemy.x) ** 2 + (e.y - enemy.y) ** 2);
+          return d < shardBlastRadius;
+        })
+        .sort((a, b) => {
+          const da = (a.x - enemy.x) ** 2 + (a.y - enemy.y) ** 2;
+          const db = (b.x - enemy.x) ** 2 + (b.y - enemy.y) ** 2;
+          return da - db;
+        })
+        .slice(0, shardCount);
+
+      for (let i = 0; i < shardCount; i++) {
+        const shardTarget = candidates[i] || null;
+        const baseAngle = Math.atan2(proj.vy, proj.vx);
+        const spreadAngle = baseAngle + (i - (shardCount - 1) / 2) * 0.45;
+        const spd = (proj.projectileSpeed || 2.8) * 1.4;
+        this.projectiles.push({
+          ...proj,
+          id: Date.now() + Math.random() + i * 0.01,
+          x: enemy.x,
+          y: enemy.y,
+          vx: Math.cos(spreadAngle) * spd,
+          vy: Math.sin(spreadAngle) * spd,
+          targetId: shardTarget?.id || null,
+          homing: !!shardTarget,
+          projectileSpeed: spd,
+          damage: proj.damage * 0.25,
+          splash: 0,
+          _isWarheadShard: true,
+          specials: [],
+          maxTravelDist: 200,
+          travelDist: 0,
+        });
+      }
+      this._addParticles(enemy.x, enemy.y, proj.color, 20);
+    }
+
     if (enemy.isBoss && proj?.towerId) {
       const t = this.towers.find((t) => t.id === proj.towerId);
       if (t) t._hitBoss = true;
     }
+
     if (enemy.isBoss && dmg > 50) this._triggerShake(4, 5);
+
     if (proj?.slowDuration && !enemy.immunities.includes(proj.towerType)) {
       enemy.slowTimer = proj.slowDuration;
       if (proj.towerType === "freeze") {
@@ -1288,6 +2861,7 @@ export class GameEngine {
         }
       }
     }
+
     if (proj?.specials?.includes("stunOnHit")) {
       if (enemy.stunCooldown <= 0) {
         if (!enemy.isBoss) {
@@ -1300,6 +2874,7 @@ export class GameEngine {
       }
       if (proj?.towerId) enemy.assistTowers?.add(proj.towerId);
     }
+
     if (proj?.burnDamage && proj?.burnDuration) {
       enemy.burnTimer = proj.burnDuration;
       enemy.burnDmg = proj.burnDamage;
@@ -1307,6 +2882,7 @@ export class GameEngine {
       if (proj.specials?.includes("burnStack"))
         enemy.burnStacks = Math.min(3, (enemy.burnStacks || 0) + 1);
     }
+
     const tt = proj?.towerType;
     if (tt) {
       this.waveDamageByTower[tt] = (this.waveDamageByTower[tt] || 0) + dmg;
@@ -1318,6 +2894,197 @@ export class GameEngine {
         tower._waveHits.add(enemy.id);
       }
     }
+
+    // ── AREA FREEZE: Nova — slow all nearby enemies on hit ───────────────────
+    if (proj?.specials?.includes("areaFreeze") && proj.towerType === "freeze") {
+      const aoeRadius = 80;
+      for (const e of this.enemies) {
+        if (e.id === enemy.id) continue;
+        if (e.immunities.includes("freeze")) continue;
+        const d = Math.sqrt((e.x - enemy.x) ** 2 + (e.y - enemy.y) ** 2);
+        if (d < aoeRadius) e.slowTimer = Math.max(e.slowTimer, 90);
+      }
+      this._addParticles(enemy.x, enemy.y, "#a5f3fc", 18);
+    }
+
+    // ── FULL FREEZE: Absolute — fully stop enemy on hit ──────────────────────
+    if (
+      proj?.specials?.includes("fullFreeze") &&
+      !enemy.immunities.includes("freeze")
+    ) {
+      enemy.stunTimer = Math.max(enemy.stunTimer, enemy.isBoss ? 60 : 120);
+      enemy.slowTimer = 0;
+      this._addParticles(enemy.x, enemy.y, "#a5f3fc", 12);
+    }
+
+    // ── AREA IGNITE: Floodfire — ignite all nearby on hit ────────────────────
+    if (proj?.specials?.includes("areaIgnite")) {
+      const igRadius = 70;
+      const burnTower = proj.towerId
+        ? this.towers.find((t) => t.id === proj.towerId)
+        : null;
+      for (const e of this.enemies) {
+        if (e.id === enemy.id) continue;
+        const d = Math.sqrt((e.x - enemy.x) ** 2 + (e.y - enemy.y) ** 2);
+        if (d < igRadius) {
+          e.burnTimer = Math.max(e.burnTimer, 120);
+          e.burnDmg = burnTower ? burnTower.burnDamage : 3;
+          e.burnSourceId = proj.towerId;
+        }
+      }
+      this._addParticles(enemy.x, enemy.y, "#ef4444", 15);
+    }
+
+    // ── VOID BURST: Antimatter — delayed void explosion ──────────────────────
+    if (proj?.specials?.includes("voidBurst") && !proj._isVoidBurst) {
+      const bx = enemy.x;
+      const by = enemy.y;
+
+      // store values now so delayed burst won't depend on mutated projectile state
+      const burstDamage = proj.damage * 2;
+      const burstTowerId = proj.towerId;
+
+      // 90 frames @ 60fps ≈ 1.5 seconds
+      const delayFrames = 90;
+      const delayMs = (delayFrames / 60) * 1000;
+
+      setTimeout(() => {
+        // prevent delayed effects after wave/game ended
+        if (this.state !== "wave") return;
+
+        for (const ve of this.enemies) {
+          const dx = ve.x - bx;
+          const dy = ve.y - by;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < 120) {
+            this._damageEnemy(ve, burstDamage, {
+              ...proj,
+
+              // important overrides
+              damage: burstDamage,
+              towerType: "sniper",
+              towerId: burstTowerId,
+
+              // prevent recursive bursts
+              _isVoidBurst: true,
+
+              // special behavior
+              armorPiercing: true,
+
+              // prevent re-triggering other specials
+              specials: [],
+            });
+          }
+        }
+
+        // visuals
+        this._addParticles(bx, by, "#7c3aed", 40);
+        this._triggerShake(5, 8);
+        this._addFloatingText(bx, by - 20, "💫 VOID BURST!", "#818cf8");
+      }, delayMs);
+    }
+
+    // ── Special: quakeStun — cannon stuns all enemies in splash range ─────────
+    if (proj?.specials?.includes("quakeStun") && proj.splash > 0) {
+      for (const se of this.enemies) {
+        const sd = Math.sqrt((se.x - proj.x) ** 2 + (se.y - proj.y) ** 2);
+        if (sd < proj.splash * 1.4 && se.stunCooldown <= 0) {
+          se.stunTimer = 30;
+          se.stunCooldown = 90;
+        }
+      }
+    }
+
+    // ── Special: bulletChain — basic Overwatch bounces to nearest enemy ───────
+    if (
+      proj?.specials?.includes("bulletChain") &&
+      (proj._chainBounces || 0) < 3
+    ) {
+      const nearest = this.enemies
+        .filter((e) => e.id !== enemy.id && !e.stealth)
+        .sort((a, b) => {
+          const da = Math.sqrt((a.x - enemy.x) ** 2 + (a.y - enemy.y) ** 2);
+          const db = Math.sqrt((b.x - enemy.x) ** 2 + (b.y - enemy.y) ** 2);
+          return da - db;
+        })[0];
+      if (nearest) {
+        const dx = nearest.x - enemy.x,
+          dy = nearest.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        this.projectiles.push({
+          ...proj,
+          id: Date.now() + Math.random(),
+          x: enemy.x,
+          y: enemy.y,
+          vx: (dx / dist) * proj.projectileSpeed,
+          vy: (dy / dist) * proj.projectileSpeed,
+          targetId: nearest.id,
+          _chainBounces: (proj._chainBounces || 0) + 1,
+          damage: proj.damage * 0.7,
+          maxTravelDist: 120,
+        });
+      }
+    }
+
+    // ── Special: seekerChain — missile seeks 2 more enemies after impact ─────
+    if (
+      proj?.specials?.includes("seekerChain") &&
+      !proj._isSeeker &&
+      !proj._seekerFired
+    ) {
+      proj._seekerFired = true;
+      const targets = this.enemies
+        .filter((e) => e.id !== enemy.id)
+        .sort((a, b) => {
+          const da = Math.sqrt((a.x - enemy.x) ** 2 + (a.y - enemy.y) ** 2);
+          const db = Math.sqrt((b.x - enemy.x) ** 2 + (b.y - enemy.y) ** 2);
+          return da - db;
+        })
+        .slice(0, 2);
+      for (const t of targets) {
+        const dx = t.x - enemy.x,
+          dy = t.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        this.projectiles.push({
+          id: Date.now() + Math.random(),
+          x: enemy.x,
+          y: enemy.y,
+          originX: enemy.x,
+          originY: enemy.y,
+          vx: (dx / dist) * proj.projectileSpeed,
+          vy: (dy / dist) * proj.projectileSpeed,
+          targetId: t.id,
+          homing: true,
+          _isSeeker: true,
+          damage:
+            Math.min(proj.damage, proj._baseTowerDamage ?? proj.damage) * 0.55,
+          splash: (proj.splash || 0) * 0.5,
+          color: "#ff9999",
+          projectileColor: "#ff9999",
+          projectileSpeed: proj.projectileSpeed,
+          armorPiercing: proj.armorPiercing || false,
+          towerType: proj.towerType,
+          towerId: proj.towerId,
+          size: proj.size || 4,
+          specials: [],
+          hasShatterSyn: proj.hasShatterSyn || false,
+          piercedEnemies: new Set(),
+          maxTravelDist: 280,
+          travelDist: 0,
+        });
+
+        if (targets.length > 0) {
+          this._addFloatingText(
+            enemy.x,
+            enemy.y - 20,
+            `↗ ${targets.length} SEEKERS`,
+            "#f43f5e",
+          );
+        }
+      }
+    }
+
     if (enemy.hp <= 0) this._killEnemy(enemy, proj?.towerType, proj?.towerId);
   }
 
@@ -1402,11 +3169,32 @@ export class GameEngine {
     this._streakCount++;
     this._streakTimer = 90;
 
+    // Gold bonus every 5 kills in streak
+    if (this._streakCount >= 5 && this._streakCount % 5 === 0) {
+      const streakBonus = Math.min(
+        4 + Math.floor(this._streakCount / 5) * 4,
+        40,
+      );
+      this.gold += streakBonus;
+      this._addFloatingText(
+        enemy.x,
+        enemy.y - 32,
+        `🔥 ${this._streakCount} STREAK  +${streakBonus}g`,
+        "#fbbf24",
+      );
+    }
+
     this.gold += enemy.reward;
     this.score += Math.floor(enemy.reward * this.wave * (enemy.isBoss ? 5 : 1));
     this.waveKills++;
 
     this.runStats.totalKills++;
+
+    // Record for enemy evolution system
+    if (towerType && !enemy.isBoss) {
+      this.waveAI.recordEnemyKill(towerType, enemy.type);
+    }
+
     this.runStats.maxGoldAtOnce = Math.max(
       this.runStats.maxGoldAtOnce,
       this.gold + enemy.reward,
@@ -1458,6 +3246,38 @@ export class GameEngine {
     if (enemy.spawnsOnDeath && enemy.spawnCount > 0)
       for (let i = 0; i < enemy.spawnCount; i++)
         this._spawnChildAt(enemy, enemy.spawnsOnDeath);
+
+    // ── ICE AGE: on kill freeze all nearby enemies 3s ────────────────────────
+    const hasIceAge = this.towers.some((t) => t.specials?.includes("iceAge"));
+    if (hasIceAge && !enemy.isBoss) {
+      for (const other of this.enemies) {
+        const d = Math.sqrt(
+          (other.x - enemy.x) ** 2 + (other.y - enemy.y) ** 2,
+        );
+        if (d < 100 && !other.immunities.includes("freeze")) {
+          other.stunTimer = Math.max(other.stunTimer, 180);
+        }
+      }
+      this._addParticles(enemy.x, enemy.y, "#a5f3fc", 18);
+    }
+
+    // ── DEATH IGNITE: Phoenix Core — killed enemy ignites neighbors ──────────
+    const hasDeathIgnite = this.towers.some((t) =>
+      t.specials?.includes("deathIgnite"),
+    );
+    if (hasDeathIgnite && !enemy.isBoss) {
+      const ignRadius = 60;
+      for (const other of this.enemies) {
+        const d = Math.sqrt(
+          (other.x - enemy.x) ** 2 + (other.y - enemy.y) ** 2,
+        );
+        if (d < ignRadius && d > 0) {
+          other.burnTimer = Math.max(other.burnTimer, 120);
+          other.burnDmg = Math.max(other.burnDmg, 4);
+        }
+      }
+      this._addParticles(enemy.x, enemy.y, "#ef4444", 20);
+    }
 
     this.enemies.splice(idx, 1);
     this._emitState();
@@ -1556,10 +3376,61 @@ export class GameEngine {
     if (this.spawnQueue.length > 0 || this.enemies.length > 0) return;
 
     // Wave-end XP pass
-    const waveXpBudget = 80 + this.wave * 4;
+    const waveXpBudget = 100 + this.wave * 8;
     this._grantWaveEndXp(waveXpBudget);
 
+    this._incomingModifier = null;
+    if ((this.wave + 1) % 10 === 0) {
+      this._incomingModifier = this._weightedRandomModifier();
+    }
+
+    // Clear in-flight projectiles — prevents carry-over into next wave
+    this.projectiles = [];
+    this.boltEffects = [];
+
+    // Clean up dual-front camp when wave ends
+    if (this.secondSpawnCamp) {
+      this.spawnCamps = this.spawnCamps.filter(
+        (c) => c !== this.secondSpawnCamp,
+      );
+      this.secondSpawnCamp = null;
+      this._secondPath = null;
+      this._secondPathCells = new Set();
+    }
+
     this.state = "idle";
+
+    // Partial auto-repair between waves (20% HP restored, re-enable disabled)
+    for (const tower of this.towers) {
+      const healed = tower.maxHp * 0.2;
+      tower.hp = Math.min(tower.maxHp, tower.hp + healed);
+      tower.repairCost = Math.ceil(
+        ((tower.maxHp - tower.hp) / tower.maxHp) * tower.cost * 0.4,
+      );
+      if (tower.disabled && tower.hp > tower.maxHp * 0.15) {
+        tower.disabled = false;
+        this._addFloatingText(tower.x, tower.y - 20, "↑ Repaired", "#4ade80");
+      }
+    }
+
+    const clearTime = Math.round((this.tick - this._waveStartTick) / 60);
+    this.lastWaveClearTime = clearTime;
+    if (clearTime < this.fastestWaveClear) this.fastestWaveClear = clearTime;
+
+    // Speed bonus — clear under 20 seconds = extra gold
+    if (clearTime > 0 && clearTime < 20 && this.wave > 2) {
+      const speedBonus = Math.floor(Math.max(0, 20 - clearTime) * 2.5);
+      if (speedBonus > 0) {
+        this.gold += speedBonus;
+        this._addFloatingText(
+          this.canvas.width / 2,
+          this.canvas.height / 2 - 30,
+          `⚡ Speed bonus +${speedBonus}g!`,
+          "#38bdf8",
+        );
+      }
+    }
+
     this.waveAI.recordWaveResults({
       enemiesKilled: this.waveKills,
       enemiesLeaked: this.waveLeaks,
@@ -1710,8 +3581,13 @@ export class GameEngine {
   //  DRAWING
   // ══════════════════════════════════════════════════════════════════════════════
   _draw() {
-    const ctx = this.ctx,
-      map = this.mapDef;
+    const ctx = this.ctx;
+
+    const skinMapTheme = this.activeSkin?.maps?.[this._currentMapKey];
+    const theme = skinMapTheme
+      ? { ...this.mapDef.theme, ...skinMapTheme }
+      : this.mapDef.theme;
+
     const W = this.canvas.width,
       H = this.canvas.height;
 
@@ -1730,27 +3606,46 @@ export class GameEngine {
     ctx.clearRect(-10, -10, W + 20, H + 20);
 
     // ── Background grid with scanlines ───────────────────────────────────────
+    const mapStyle = this.activeSkin?.mapStyle || "neon";
+
     for (let row = 0; row < GRID_ROWS; row++) {
       for (let col = 0; col < GRID_COLS; col++) {
         const isPath = this._isPathCell(col, row);
+        const isSecondPath = this._secondPathCells?.has(`${col},${row}`);
         const x = col * CELL_SIZE,
           y = row * CELL_SIZE;
-        if (isPath) {
-          ctx.fillStyle = map.theme.path;
+
+        if (isPath || isSecondPath) {
+          // Path base
+          ctx.fillStyle =
+            isSecondPath && !isPath
+              ? _blendColor(theme.path, "#4ade80", 0.15)
+              : theme.path;
           ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
           // subtle path glow
           ctx.fillStyle = "rgba(255,255,255,0.03)";
           ctx.fillRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+
+          _drawPathCell(ctx, x, y, CELL_SIZE, mapStyle, theme, this.tick);
         } else {
-          // checkerboard depth
+          // Ground base — checkerboard
           ctx.fillStyle =
-            (row + col) % 2 === 0 ? map.theme.bg : _shadeColor(map.theme.bg, 8);
+            (row + col) % 2 === 0 ? theme.bg : _shadeColor(theme.bg, 8);
           ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+          _drawGroundCell(
+            ctx,
+            x,
+            y,
+            CELL_SIZE,
+            mapStyle,
+            theme,
+            row,
+            col,
+            this.tick,
+          );
         }
         // thin grid lines
-        ctx.strokeStyle = isPath
-          ? map.theme.pathBorder
-          : "rgba(255,255,255,0.03)";
+        ctx.strokeStyle = isPath ? theme.pathBorder : "rgba(255,255,255,0.03)";
         ctx.lineWidth = 0.5;
         ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
       }
@@ -1762,7 +3657,7 @@ export class GameEngine {
 
     // ── Path direction arrows ─────────────────────────────────────────────────
     ctx.save();
-    ctx.strokeStyle = map.theme.pathBorder;
+    ctx.strokeStyle = theme.pathBorder;
     ctx.lineWidth = 1;
     for (let i = 0; i < this.path.length - 5; i += 10) {
       const a = this.path[i],
@@ -1782,6 +3677,47 @@ export class GameEngine {
       ctx.restore();
     }
     ctx.restore();
+
+    // ── Second path arrows (dual front) ────────────────────────────────────
+    if (this._secondPath?.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = "#4ade80"; // green to distinguish from main path
+      ctx.lineWidth = 1;
+      for (let i = 0; i < this._secondPath.length - 5; i += 10) {
+        const a = this._secondPath[i];
+        const b =
+          this._secondPath[Math.min(i + 5, this._secondPath.length - 1)];
+        const ang = Math.atan2(b.y - a.y, b.x - a.x);
+        ctx.save();
+        ctx.translate(a.x, a.y);
+        ctx.rotate(ang);
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(-4, 0);
+        ctx.lineTo(4, 0);
+        ctx.lineTo(2, -3);
+        ctx.moveTo(4, 0);
+        ctx.lineTo(2, 3);
+        ctx.stroke();
+        ctx.restore();
+      }
+      // Entry point marker
+      const entry = this._secondPath[0];
+      const pulse = 0.5 + 0.5 * Math.abs(Math.sin(this.tick * 0.1));
+      ctx.globalAlpha = pulse;
+      ctx.strokeStyle = "#ef4444";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(entry.x, entry.y, 14, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#ef4444";
+      ctx.font = "bold 9px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("⚠ 2ND FRONT", entry.x, entry.y - 22);
+      ctx.restore();
+    }
 
     // ── Spawn camps + Kingdom ─────────────────────────────────────────────
     for (const camp of this.spawnCamps) camp.draw(ctx, this.tick);
@@ -1967,7 +3903,7 @@ export class GameEngine {
         ctx.globalAlpha = 1;
       }
 
-      _drawTowerShape(ctx, tower, this.tick);
+      _drawTowerShape(ctx, tower, this.tick, this.activeSkin);
       ctx.restore();
 
       // range ring on select
@@ -1985,27 +3921,188 @@ export class GameEngine {
         ctx.fill();
       }
 
-      // tier badge
-      if (tower.tier > 0) {
-        ctx.fillStyle = tower.tier === 2 ? "#fbbf24" : "#38bdf8";
+      // Cyclone spin ring visual
+      if (tower.specials?.includes("cyclone")) {
+        const spinRadius = tower.range * 0.65;
+        const rot = this.tick * 0.08;
+        ctx.save();
+        ctx.globalAlpha = 0.25 + 0.15 * Math.sin(this.tick * 0.15);
+        ctx.strokeStyle = tower.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 12]);
+        ctx.lineDashOffset = -this.tick * 0.8; // animates the dash moving
         ctx.beginPath();
-        ctx.arc(
-          tower.col * CELL_SIZE + CELL_SIZE - 6,
-          tower.row * CELL_SIZE + 6,
-          6,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-        ctx.fillStyle = "#000";
-        ctx.font = "bold 7px monospace";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(
-          `T${tower.tier}`,
-          tower.col * CELL_SIZE + CELL_SIZE - 6,
-          tower.row * CELL_SIZE + 6,
-        );
+        ctx.arc(tower.x, tower.y, spinRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 3 orbiting dots
+        for (let i = 0; i < 3; i++) {
+          const a = rot + i * ((Math.PI * 2) / 3);
+          ctx.globalAlpha = 0.7;
+          ctx.fillStyle = tower.color;
+          ctx.beginPath();
+          ctx.arc(
+            tower.x + Math.cos(a) * spinRadius,
+            tower.y + Math.sin(a) * spinRadius,
+            4,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // tier badge
+      {
+        const bx = tower.col * CELL_SIZE + CELL_SIZE - 7;
+        const by = tower.row * CELL_SIZE + 7;
+
+        // Determine badge tier
+        const hasL2 = tower.legendary100Unlocked;
+        const hasL1 = tower.legendaryUnlocked;
+        const hasT2 = tower.skill10chosen;
+        const hasT1 = tower.skill5chosen;
+
+        if (hasL2) {
+          // ✦✦ Legendary 100 — red star with pulse
+          const pulse = 0.7 + 0.3 * Math.sin(this.tick * 0.15);
+          ctx.save();
+          ctx.globalAlpha = pulse;
+          ctx.shadowColor = "#ef4444";
+          ctx.shadowBlur = 10;
+          // outer glow ring
+          ctx.strokeStyle = "#ef4444";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(bx, by, 8, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          // badge fill
+          ctx.fillStyle = "#450a0a";
+          ctx.beginPath();
+          ctx.arc(bx, by, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.restore();
+          ctx.font = "9px serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("✦", bx, by + 0.5);
+        } else if (hasL1) {
+          // ✦ Legendary 50 — gold star with pulse
+          const pulse = 0.75 + 0.25 * Math.sin(this.tick * 0.12);
+          ctx.save();
+          ctx.globalAlpha = pulse;
+          ctx.shadowColor = "#f59e0b";
+          ctx.shadowBlur = 8;
+          ctx.strokeStyle = "#f59e0b";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(bx, by, 8, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "#451a03";
+          ctx.beginPath();
+          ctx.arc(bx, by, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.restore();
+          ctx.font = "9px serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("✦", bx, by + 0.5);
+        } else if (hasT2) {
+          // T2 — yellow diamond
+          ctx.save();
+          ctx.fillStyle = "#fbbf24";
+          ctx.strokeStyle = "#000";
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.moveTo(bx, by - 7);
+          ctx.lineTo(bx + 5, by);
+          ctx.lineTo(bx, by + 7);
+          ctx.lineTo(bx - 5, by);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+          ctx.fillStyle = "#000";
+          ctx.font = "bold 6px monospace";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("T2", bx, by + 0.5);
+        } else if (hasT1) {
+          // T1 — blue circle
+          ctx.save();
+          ctx.fillStyle = "#38bdf8";
+          ctx.strokeStyle = "#000";
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.arc(bx, by, 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+          ctx.fillStyle = "#000";
+          ctx.font = "bold 6px monospace";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("T1", bx, by + 0.5);
+        }
+
+        // Upgrade-ready indicator — small flashing dot on bottom-left corner
+        if (tower.upgradeReady) {
+          const dotPulse = 0.5 + 0.5 * Math.abs(Math.sin(this.tick * 0.18));
+          ctx.save();
+          ctx.globalAlpha = dotPulse;
+          ctx.fillStyle = "#fbbf24";
+          ctx.shadowColor = "#fbbf24";
+          ctx.shadowBlur = 6;
+          ctx.beginPath();
+          ctx.arc(
+            tower.col * CELL_SIZE + 6,
+            tower.row * CELL_SIZE + CELL_SIZE - 6,
+            4,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // HP bar (only show if damaged)
+      if (tower.hp < tower.maxHp) {
+        const hpPct = tower.hp / tower.maxHp;
+        const barW = CELL_SIZE - 6;
+        const barX = tower.col * CELL_SIZE + 3;
+        const barY = tower.row * CELL_SIZE + 2;
+        ctx.fillStyle = "rgba(0,0,0,0.8)";
+        ctx.fillRect(barX - 1, barY - 1, barW + 2, 5);
+        ctx.fillStyle =
+          hpPct > 0.6 ? "#4ade80" : hpPct > 0.3 ? "#facc15" : "#ef4444";
+        ctx.fillRect(barX, barY, barW * hpPct, 3);
+        // Disabled overlay
+        if (tower.disabled) {
+          ctx.fillStyle = "rgba(0,0,0,0.55)";
+          ctx.fillRect(
+            tower.col * CELL_SIZE + 2,
+            tower.row * CELL_SIZE + 2,
+            CELL_SIZE - 4,
+            CELL_SIZE - 4,
+          );
+          ctx.fillStyle = "#ef4444";
+          ctx.font = "bold 14px monospace";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(
+            "✕",
+            tower.col * CELL_SIZE + CELL_SIZE / 2,
+            tower.row * CELL_SIZE + CELL_SIZE / 2,
+          );
+          ctx.textBaseline = "alphabetic";
+        }
       }
 
       // cooldown bar
@@ -2026,6 +4123,62 @@ export class GameEngine {
           3,
         );
       }
+    }
+
+    // ── BALL LIGHTNINGS ────────────────────────────────────────────────────────
+    for (const bl of this.ballLightnings || []) {
+      const life = bl.timer / 300;
+      ctx.save();
+      ctx.globalAlpha = life;
+      ctx.shadowColor = bl.color;
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = bl.color;
+      ctx.beginPath();
+      ctx.arc(bl.x, bl.y, 6 + 3 * Math.sin(this.tick * 0.3), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(bl.x, bl.y, 10, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
+    // ── BURN ZONES ─────────────────────────────────────────────────────────────
+    for (const z of this.burnZones || []) {
+      const alpha = (z.timer / 180) * 0.35;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath();
+      ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ff6600";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // ── BLACK HOLES ────────────────────────────────────────────────────────────
+    for (const bh of this.blackHoles || []) {
+      const life = bh.timer / 180;
+      const pulseR = bh.radius * (0.15 + 0.08 * Math.sin(this.tick * 0.2));
+      ctx.save();
+      ctx.globalAlpha = life * 0.6;
+      ctx.strokeStyle = "#818cf8";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(bh.x, bh.y, bh.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = life;
+      ctx.fillStyle = "#1e1b4b";
+      ctx.beginPath();
+      ctx.arc(bh.x, bh.y, pulseR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
 
     // ── ENEMIES ───────────────────────────────────────────────────────────────
@@ -2097,6 +4250,40 @@ export class GameEngine {
         ctx.font = "bold 8px monospace";
         ctx.textAlign = "center";
         ctx.fillText("⚠ LASER", enemy.x, enemy.y - enemy.size - 14);
+      }
+
+      // Healer priority marker
+      if (enemy.type === "healer") {
+        ctx.fillStyle = "#4ade80";
+        ctx.font = "bold 8px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("⚕ PRIORITY", enemy.x, enemy.y - enemy.size - 14);
+      }
+
+      // Missile lock-on indicator
+      const isLocked = this.projectiles.some(
+        (p) => p.towerType === "missile" && p.homing && p.targetId === enemy.id,
+      );
+      if (isLocked) {
+        ctx.save();
+        ctx.strokeStyle = "#f43f5e";
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(this.tick * 0.25));
+        const rSize = enemy.size + 8;
+        // Corner brackets
+        for (const [sx, sy] of [
+          [-1, -1],
+          [1, -1],
+          [1, 1],
+          [-1, 1],
+        ]) {
+          ctx.beginPath();
+          ctx.moveTo(enemy.x + sx * rSize, enemy.y + sy * (rSize - 4));
+          ctx.lineTo(enemy.x + sx * rSize, enemy.y + sy * rSize);
+          ctx.lineTo(enemy.x + sx * (rSize - 4), enemy.y + sy * rSize);
+          ctx.stroke();
+        }
+        ctx.restore();
       }
 
       // Elite indicator ring
@@ -2213,6 +4400,31 @@ export class GameEngine {
     }
     ctx.globalAlpha = 1;
 
+    // ── EVOLUTION ALERT ──────────────────────────────────────────────────────
+    if (this.evolutionAlertTimer > 0) {
+      this.evolutionAlertTimer--;
+      const evo = this.evolutionAlertDef;
+      if (evo) {
+        const fadeAlpha = Math.min(1, this.evolutionAlertTimer / 30);
+        ctx.globalAlpha = fadeAlpha;
+        ctx.fillStyle = "rgba(0,0,0,0.75)";
+        ctx.fillRect(W * 0.15, H * 0.38, W * 0.7, 70);
+        ctx.fillStyle = "#ef4444";
+        ctx.font = "bold 11px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("⚠ ENEMY EVOLUTION DETECTED", W / 2, H * 0.38 + 16);
+        ctx.fillStyle = "#fde68a";
+        ctx.font = "bold 13px monospace";
+        ctx.fillText(`${evo.icon} ${evo.name}`, W / 2, H * 0.38 + 34);
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "10px monospace";
+        ctx.fillText(evo.desc, W / 2, H * 0.38 + 52);
+        ctx.globalAlpha = 1;
+        ctx.textBaseline = "alphabetic";
+      }
+    }
+
     // ── BOSS WARNING ──────────────────────────────────────────────────────────
     if (this.bossWarningTimer > 0) {
       this.bossWarningTimer--;
@@ -2257,13 +4469,79 @@ export class GameEngine {
       ctx.globalAlpha = 1;
     }
 
-    // ── ENDLESS BADGE ─────────────────────────────────────────────────────────
-    if (this.isEndless && this.state === "wave") {
-      ctx.fillStyle = "rgba(129,140,248,0.9)";
-      ctx.font = "bold 11px monospace";
+    // ── Persistent wave info bar ──────────────────────────────────────────────
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.fillRect(0, 0, W, 30);
+
+    // Wave number (left)
+    const waveLabel = this.isEndless
+      ? `∞ WAVE ${this.wave}`
+      : `WAVE ${this.wave} / ${this.levelConfig.waves}`;
+    ctx.fillStyle = this.isEndless ? "#818cf8" : "#38bdf8";
+    ctx.font = "bold 13px monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(waveLabel, 10, 15);
+
+    // Modifier or incoming warning (center-right)
+    if (this.activeModifier) {
+      const mod = this.activeModifier;
+      const tc =
+        mod.type === "buff"
+          ? "#4ade80"
+          : mod.type === "debuff"
+            ? "#ef4444"
+            : "#c4b5fd";
+      const bg =
+        mod.type === "buff"
+          ? "rgba(74,222,128,0.15)"
+          : mod.type === "debuff"
+            ? "rgba(239,68,68,0.15)"
+            : "rgba(129,140,248,0.15)";
+      ctx.fillStyle = bg;
+      ctx.fillRect(W * 0.28, 2, W * 0.72 - 4, 26);
+      ctx.fillStyle = tc;
+      ctx.font = "bold 10px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(
+        `${mod.icon} ${mod.name.toUpperCase()} — ${mod.desc}`,
+        W * 0.65,
+        15,
+      );
+      if (this.silencedTowerType) {
+        const tDef = TOWER_TYPES[this.silencedTowerType];
+        ctx.fillStyle = "#fca5a5";
+        ctx.textAlign = "right";
+        ctx.fillText(
+          `🔇 ${tDef?.name || this.silencedTowerType} SILENCED`,
+          W - 6,
+          15,
+        );
+      }
+    } else if (this._incomingModifier) {
+      const mod = this._incomingModifier;
+      const pulse = 0.6 + 0.4 * Math.abs(Math.sin(this.tick * 0.1));
+      const tc =
+        mod.type === "buff"
+          ? `rgba(134,239,172,${pulse})`
+          : mod.type === "debuff"
+            ? `rgba(252,165,165,${pulse})`
+            : `rgba(196,181,253,${pulse})`;
+      ctx.fillStyle = tc;
+      ctx.font = "10px monospace";
       ctx.textAlign = "right";
-      ctx.fillText(`∞ WAVE ${this.wave}`, W - 8, 18);
+      ctx.fillText(
+        `⚡ NEXT WAVE: ${mod.icon} ${mod.name} — ${mod.desc}`,
+        W - 10,
+        15,
+      );
+    } else if (this.state === "idle") {
+      ctx.fillStyle = "#374151";
+      ctx.font = "10px monospace";
+      ctx.textAlign = "right";
+      ctx.fillText(`▶ Deploy towers — start wave ${this.wave + 1}`, W - 10, 15);
     }
+    ctx.textBaseline = "alphabetic";
 
     // ── GAME OVER / VICTORY ───────────────────────────────────────────────────
     if (this.state === "gameover" || this.state === "victory") {
@@ -2323,6 +4601,58 @@ export class GameEngine {
     }
   }
 
+  repairTower(col, row) {
+    const tower = this.grid[row]?.[col];
+    if (!tower) return false;
+    if (tower.hp >= tower.maxHp) return false;
+    const cost = tower.repairCost || 0;
+    if (this.gold < cost) {
+      this._addFloatingText(tower.x, tower.y - 20, `Need ${cost}g`, "#ef4444");
+      return false;
+    }
+    this.gold -= cost;
+    tower.hp = tower.maxHp;
+    tower.disabled = false;
+    tower.repairCost = 0;
+    this._addFloatingText(tower.x, tower.y - 20, "✓ Fully Repaired", "#4ade80");
+    this._addParticles(tower.x, tower.y, "#4ade80", 15);
+    this._emitState();
+    return true;
+  }
+
+  repairAllTowers() {
+    if (this.state !== "idle") return false;
+    const damaged = this.towers.filter((t) => t.hp < t.maxHp);
+    if (damaged.length === 0) return false;
+
+    const totalCost = damaged.reduce((sum, t) => sum + (t.repairCost || 0), 0);
+    if (totalCost > 0 && this.gold < totalCost) {
+      this._addFloatingText(
+        this.canvas.width / 2,
+        this.canvas.height / 2,
+        `Need ${totalCost}g to repair all!`,
+        "#ef4444",
+      );
+      return false;
+    }
+
+    this.gold -= totalCost;
+    for (const t of damaged) {
+      t.hp = t.maxHp;
+      t.disabled = false;
+      t.repairCost = 0;
+      this._addParticles(t.x, t.y, "#4ade80", 8);
+    }
+    this._addFloatingText(
+      this.canvas.width / 2,
+      this.canvas.height / 2 - 20,
+      `🔧 ${damaged.length} towers repaired! -${totalCost}g`,
+      "#4ade80",
+    );
+    this._emitState();
+    return true;
+  }
+
   togglePause() {
     if (this.state !== "wave") return false;
     this.paused = !this.paused;
@@ -2335,6 +4665,10 @@ export class GameEngine {
       version: 1,
       timestamp: new Date().toISOString(),
       levelId: this.levelId,
+
+      savedMapKey: this._currentMapKey,
+      savedMapWaveRotation: this.wave,
+
       wave: this.wave,
       gold: this.gold,
       lives: this.lives,
@@ -2361,7 +4695,9 @@ export class GameEngine {
 
   loadSaveState(save) {
     if (!save || save.version !== 1) return false;
-    this._applyLevel(save.levelId);
+
+    console.log("🔄 Loading save with map:", save.savedMapKey);
+    this._applyLevel(save.levelId, save.savedMapKey || null);
 
     this.wave = save.wave;
     this.gold = save.gold;
@@ -2373,6 +4709,12 @@ export class GameEngine {
       save.selectedTowerType || this.levelConfig.unlockedTowers[0];
     this.towerCatCounts = { ...save.towerCatCounts };
 
+    // Restore towers
+    this.towers = [];
+    this.grid = Array.from({ length: GRID_ROWS }, () =>
+      Array(GRID_COLS).fill(null),
+    );
+
     for (const st of save.towers) {
       const tower = { ...st };
       tower._waveHits = new Set();
@@ -2380,6 +4722,14 @@ export class GameEngine {
       this.towers.push(tower);
       this.grid[tower.row][tower.col] = tower;
     }
+
+    // Rebuild path/kingdom using the map that was just set in _applyLevel
+    this.path = this._buildPath(this.mapDef.waypoints);
+    this.pathCells = this._buildPathCells(this.mapDef.waypoints);
+
+    const lastPt = this.path[this.path.length - 1];
+    this.kingdom = new Kingdom(lastPt.x, lastPt.y);
+    this.spawnCamps = [new SpawnCamp(this.path[0].x, this.path[0].y, 0)];
 
     if (save.playerProfile) {
       this.waveAI.playerProfile = {
@@ -2429,7 +4779,19 @@ export class GameEngine {
       score: this.score,
       state: this.state,
       paused: this.paused,
+      activeMapBonus: this.activeMapBonus || null,
+      repairAllCost: this.towers.reduce(
+        (s, t) => s + (t.hp < t.maxHp ? t.repairCost || 0 : 0),
+        0,
+      ),
+      damagedTowerCount: this.towers.filter((t) => t.hp < t.maxHp).length,
       activeModifier: this.activeModifier,
+
+      incomingModifier: this._incomingModifier || null,
+      lastWaveClearTime: this.lastWaveClearTime || 0,
+      fastestWaveClear:
+        this.fastestWaveClear === Infinity ? 0 : this.fastestWaveClear || 0,
+
       silencedTowerType: this.silencedTowerType,
       runStats: { ...this.runStats },
       runAchievements: [...(this._runAchievements || [])],
@@ -2472,6 +4834,8 @@ export class GameEngine {
       ),
       globalBuff: { ...this.globalBuff },
       lastStandActive: this.lastStandActive,
+      evolutionAlertDef: this.evolutionAlertDef,
+      activeEvolutions: { ...this.waveAI.activeEvolutions },
       towers: this.towers.map((t) => ({
         id: t.id,
         type: t.type,
@@ -2500,6 +4864,12 @@ export class GameEngine {
 
         legendary50Path: t.legendary50Path || null,
         legendary100Path: t.legendary100Path || null,
+
+        hp: Math.ceil(t.hp),
+        maxHp: t.maxHp,
+        disabled: t.disabled,
+        repairCost: t.repairCost || 0,
+        damageType: TOWER_TYPES[t.type]?.damageType || "physical",
       })),
     });
   }
@@ -2529,6 +4899,19 @@ export class GameEngine {
     this._setupCanvas();
     this._emitState();
     this._loop();
+  }
+
+  startEndlessWithMap(mapDef) {
+    this.mapDef = mapDef;
+    this.activeMapBonus = mapDef.mapBonus || null;
+    this.path = this._buildPath(mapDef.waypoints);
+    this.pathCells = this._buildPathCells(mapDef.waypoints);
+
+    const lastPt = this.path[this.path.length - 1];
+    this.kingdom = new Kingdom(lastPt.x, lastPt.y);
+    this.spawnCamps = [new SpawnCamp(this.path[0].x, this.path[0].y, 0)];
+
+    this._emitState();
   }
 
   destroy() {
@@ -2582,6 +4965,154 @@ function _roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+function _drawPathCell(ctx, x, y, size, style, theme, tick) {
+  ctx.save();
+  switch (style) {
+    case "medieval": {
+      // Cobblestone — alternating stone blocks
+      ctx.strokeStyle = "rgba(139,105,20,0.25)";
+      ctx.lineWidth = 0.5;
+      const stoneW = size / 2,
+        stoneH = size / 2;
+      for (let si = 0; si < 2; si++)
+        for (let sj = 0; sj < 2; sj++) {
+          const offset = sj % 2 === 0 ? stoneW * 0.5 : 0;
+          ctx.strokeRect(
+            x + si * stoneW + offset,
+            y + sj * stoneH,
+            stoneW,
+            stoneH,
+          );
+        }
+      // moss tint
+      ctx.fillStyle = "rgba(74,222,128,0.04)";
+      ctx.fillRect(x, y, size, size);
+      break;
+    }
+    case "jungle": {
+      // Dirt path with root marks
+      ctx.strokeStyle = "rgba(134,239,172,0.15)";
+      ctx.lineWidth = 0.8;
+      // horizontal root lines
+      for (let i = 1; i < 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(x, y + (size / 3) * i);
+        ctx.bezierCurveTo(
+          x + size * 0.3,
+          y + (size / 3) * i - 2,
+          x + size * 0.7,
+          y + (size / 3) * i + 2,
+          x + size,
+          y + (size / 3) * i,
+        );
+        ctx.stroke();
+      }
+      break;
+    }
+    case "neon": {
+      // Glowing lane lines
+      const pulse = 0.1 + 0.06 * Math.sin(tick * 0.05);
+      ctx.strokeStyle = `rgba(0,255,255,${pulse})`;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 2, y + 2, size - 4, size - 4);
+      // center dot grid
+      if ((Math.floor(x / size) + Math.floor(y / size)) % 3 === 0) {
+        ctx.fillStyle = `rgba(255,0,255,${pulse * 1.5})`;
+        ctx.beginPath();
+        ctx.arc(x + size / 2, y + size / 2, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    default: {
+      // Tech — subtle scanline
+      ctx.fillStyle = "rgba(255,255,255,0.03)";
+      ctx.fillRect(x + 1, y + 1, size - 2, size - 2);
+    }
+  }
+  ctx.restore();
+}
+
+function _drawGroundCell(ctx, x, y, size, style, theme, row, col, tick) {
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  switch (style) {
+    case "medieval": {
+      // Grass tufts at random-ish positions based on col/row
+      if ((col * 7 + row * 3) % 5 === 0) {
+        ctx.strokeStyle = "#166534";
+        ctx.lineWidth = 0.8;
+        const gx = x + ((col * 13) % (size - 6)) + 3;
+        const gy = y + ((row * 11) % (size - 6)) + 3;
+        // 3 grass blades
+        for (let b = -1; b <= 1; b++) {
+          ctx.beginPath();
+          ctx.moveTo(gx + b * 3, gy + 4);
+          ctx.quadraticCurveTo(gx + b * 3 + b, gy, gx + b * 3 + b * 2, gy - 3);
+          ctx.stroke();
+        }
+      }
+      // stone texture hint
+      if ((col + row) % 4 === 0) {
+        ctx.strokeStyle = "rgba(120,113,108,0.12)";
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(x + 3, y + 3, size - 6, size - 6);
+      }
+      break;
+    }
+    case "jungle": {
+      // Leaf scatter
+      if ((col * 5 + row * 9) % 4 === 0) {
+        ctx.fillStyle = "#15803d";
+        ctx.beginPath();
+        const lx = x + ((col * 17) % (size - 8)) + 4;
+        const ly = y + ((row * 13) % (size - 8)) + 4;
+        ctx.ellipse(lx, ly, 3, 5, (col + row) * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // vine lines
+      if ((col * row) % 8 === 0) {
+        ctx.strokeStyle = "rgba(21,128,61,0.2)";
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(x, y + size * 0.3);
+        ctx.quadraticCurveTo(
+          x + size * 0.5,
+          y + size * 0.1,
+          x + size,
+          y + size * 0.5,
+        );
+        ctx.stroke();
+      }
+      break;
+    }
+    case "neon": {
+      // Grid dots
+      if ((col + row) % 2 === 0) {
+        const pulse = 0.08 + 0.04 * Math.sin(tick * 0.03 + col * 0.1);
+        ctx.fillStyle = `rgba(0,255,255,${pulse})`;
+        ctx.beginPath();
+        ctx.arc(x + size / 2, y + size / 2, 1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    default:
+      break; // tech skin needs nothing extra
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+function _blendColor(hex1, hex2, t) {
+  const n1 = parseInt(hex1.replace("#", ""), 16);
+  const n2 = parseInt(hex2.replace("#", ""), 16);
+  const r = Math.round(((n1 >> 16) & 0xff) * (1 - t) + ((n2 >> 16) & 0xff) * t);
+  const g = Math.round(((n1 >> 8) & 0xff) * (1 - t) + ((n2 >> 8) & 0xff) * t);
+  const b = Math.round((n1 & 0xff) * (1 - t) + (n2 & 0xff) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
 // ── Helper: darken/lighten a hex color ───────────────────────────────────
 function _shadeColor(hex, amt) {
   const num = parseInt(hex.replace("#", ""), 16);
@@ -2592,221 +5123,61 @@ function _shadeColor(hex, amt) {
 }
 
 // ── Tower shape renderer ──────────────────────────────────────────────────
-// ctx is already translated to tower center
 function _drawTowerShape(ctx, tower, tick) {
   const c = tower.color;
-  const s = CELL_SIZE * 0.38; // base size
+  const s = CELL_SIZE * 0.38;
 
-  ctx.strokeStyle = c;
-  ctx.fillStyle = c;
-  ctx.lineWidth = 2;
   ctx.shadowColor = c;
-  ctx.shadowBlur = 6;
+  ctx.shadowBlur = 10;
 
-  switch (tower.type) {
-    case "basic": {
-      // rotating 4-barrel gatling look
-      const rot = tick * 0.04;
-      for (let i = 0; i < 4; i++) {
-        const a = rot + i * (Math.PI / 2);
-        ctx.save();
-        ctx.rotate(a);
-        ctx.fillStyle = c;
-        ctx.fillRect(-2, -s * 0.3, 4, s * 0.7);
-        ctx.restore();
-      }
-      // center hub
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.32, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.15, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
+  // Subtle colored glow behind emoji so color-coding is preserved
+  ctx.globalAlpha = 0.2;
+  ctx.fillStyle = c;
+  ctx.beginPath();
+  ctx.arc(0, 0, s * 0.95, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
 
-    case "sniper": {
-      // long single barrel pointing toward last target angle
-      const angle = tower._drawAngle || 0;
-      ctx.save();
-      ctx.rotate(angle);
-      // barrel
-      ctx.fillStyle = c;
-      ctx.fillRect(-2, -s * 0.9, 4, s * 0.9);
-      // scope
-      ctx.strokeStyle = c;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(-5, -s * 0.55, 10, 6);
-      ctx.restore();
-      // base
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-
-    case "cannon": {
-      // squat wide barrel
-      const angle = tower._drawAngle || 0;
-      ctx.save();
-      ctx.rotate(angle);
-      ctx.fillStyle = c;
-      ctx.fillRect(-5, -s * 0.7, 10, s * 0.7);
-      // muzzle ring
-      ctx.strokeStyle = c;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, -s * 0.7, 6, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.38, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.18, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-
-    case "laser": {
-      // 3-prong rotating dish
-      const rot = tick * 0.06;
-      for (let i = 0; i < 3; i++) {
-        const a = rot + i * ((Math.PI * 2) / 3);
-        ctx.save();
-        ctx.rotate(a);
-        ctx.fillStyle = c;
-        ctx.fillRect(-1.5, -s * 0.75, 3, s * 0.45);
-        ctx.restore();
-      }
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.28, 0, Math.PI * 2);
-      ctx.fill();
-      // pulsing core
-      const pulse = 0.5 + 0.5 * Math.sin(tick * 0.2);
-      ctx.globalAlpha = pulse * 0.7;
-      ctx.fillStyle = "#fff";
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.12, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      break;
-    }
-
-    case "freeze": {
-      // snowflake 6 arms
-      const rot = tick * -0.02;
-      for (let i = 0; i < 6; i++) {
-        const a = rot + i * (Math.PI / 3);
-        ctx.save();
-        ctx.rotate(a);
-        ctx.strokeStyle = c;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(0, -s * 0.72);
-        ctx.stroke();
-        // branch lines
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(-3, -s * 0.4);
-        ctx.lineTo(3, -s * 0.4);
-        ctx.moveTo(-2, -s * 0.58);
-        ctx.lineTo(2, -s * 0.58);
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.22, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-
-    case "tesla": {
-      // coil rings + electric arc indicator
-      for (let ring = 1; ring <= 3; ring++) {
-        const r = ring * s * 0.22;
-        const alpha = 1 - ring * 0.25;
-        ctx.globalAlpha = alpha;
-        ctx.strokeStyle = c;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(0, 0, r, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.globalAlpha = 1;
-      // lightning symbol in center
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.moveTo(3, -s * 0.3);
-      ctx.lineTo(-1, 0);
-      ctx.lineTo(3, 0);
-      ctx.lineTo(-3, s * 0.35);
-      ctx.lineTo(1, s * 0.05);
-      ctx.lineTo(-2, s * 0.05);
-      ctx.closePath();
-      ctx.fill();
-      break;
-    }
-
-    case "inferno": {
-      // rotating flame petals
-      const rot = tick * 0.05;
-      for (let i = 0; i < 5; i++) {
-        const a = rot + i * ((Math.PI * 2) / 5);
-        ctx.save();
-        ctx.rotate(a);
-        ctx.fillStyle = i % 2 === 0 ? c : "#ff6600";
-        ctx.beginPath();
-        ctx.ellipse(0, -s * 0.5, s * 0.15, s * 0.32, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-      // core
-      ctx.fillStyle = "#ffdd00";
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.22, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.12, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-
-    case "vortex": {
-      // spiral arms
-      const rot = tick * 0.07;
-      for (let i = 0; i < 4; i++) {
-        const a = rot + i * (Math.PI / 2);
-        ctx.save();
-        ctx.rotate(a);
-        ctx.strokeStyle = c;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(s * 0.28, 0, s * 0.28, Math.PI * 0.6, Math.PI * 1.8);
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.09, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-
-    default: {
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-    }
+  // Rotating indicator for towers that had spinning shapes
+  if (
+    tower.type === "basic" ||
+    tower.type === "laser" ||
+    tower.type === "vortex"
+  ) {
+    const rot = tick * (tower.type === "vortex" ? 0.07 : 0.04);
+    ctx.save();
+    ctx.rotate(rot);
+    ctx.globalAlpha = 0.3;
+    ctx.strokeStyle = c;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(0, 0, s * 0.85, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+    ctx.globalAlpha = 1;
   }
+
+  // Barrel indicator for directional towers
+  if (
+    ["sniper", "cannon", "missile"].includes(tower.type) &&
+    tower._drawAngle
+  ) {
+    ctx.save();
+    ctx.rotate(tower._drawAngle);
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = c;
+    ctx.fillRect(-2, -s * 0.85, 4, s * 0.5);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // Emoji
+  ctx.font = `${CELL_SIZE * 0.62}px serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(tower.icon || "🗼", 0, 1);
 
   ctx.shadowBlur = 0;
 }
@@ -2814,303 +5185,84 @@ function _drawTowerShape(ctx, tower, tick) {
 // ── Enemy shape renderer ──────────────────────────────────────────────────
 // ctx is already translated to enemy center
 function _drawEnemyShape(ctx, enemy, tick) {
-  const c = enemy.color;
   const r = enemy.size;
 
-  ctx.shadowColor = c;
-  ctx.shadowBlur = enemy.isBoss ? 14 : 6;
+  ctx.shadowColor = enemy.color;
+  ctx.shadowBlur = enemy.isBoss ? 16 : 8;
 
-  switch (enemy.type) {
-    case "basic": {
-      // hexagon grunt
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
-        i === 0
-          ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r)
-          : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = c;
-      ctx.globalAlpha = 0.6;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      break;
-    }
-
-    case "fast": {
-      // sharp diamond / arrowhead
-      const rot = tick * 0.1;
-      ctx.save();
-      ctx.rotate(rot);
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.moveTo(0, -r * 1.3);
-      ctx.lineTo(r * 0.7, r * 0.6);
-      ctx.lineTo(0, r * 0.3);
-      ctx.lineTo(-r * 0.7, r * 0.6);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-      // speed trail dots
-      ctx.globalAlpha = 0.3;
-      for (let i = 1; i <= 3; i++) {
-        ctx.fillStyle = c;
-        ctx.beginPath();
-        ctx.arc(0, r * i * 0.7, r * 0.2 * (1 - i * 0.25), 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-      break;
-    }
-
-    case "armored": {
-      // square with corner bolts (tank feel)
-      ctx.fillStyle = c;
-      const rr = r * 0.9;
-      ctx.fillRect(-rr, -rr, rr * 2, rr * 2);
-      ctx.fillStyle = "#64748b";
-      for (const [dx, dy] of [
-        [-1, -1],
-        [1, -1],
-        [-1, 1],
-        [1, 1],
-      ]) {
-        ctx.beginPath();
-        ctx.arc(dx * rr * 0.7, dy * rr * 0.7, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.strokeStyle = "#94a3b8";
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(-rr, -rr, rr * 2, rr * 2);
-      ctx.fillStyle = "#0f172a";
-      ctx.fillRect(-r * 0.35, -r * 0.35, r * 0.7, r * 0.7);
-      break;
-    }
-
-    case "swarm": {
-      // tiny organic circle with 3 spikes
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
-      const spikeRot = tick * 0.12;
-      for (let i = 0; i < 3; i++) {
-        const a = spikeRot + i * ((Math.PI * 2) / 3);
-        ctx.fillStyle = c;
-        ctx.save();
-        ctx.rotate(a);
-        ctx.beginPath();
-        ctx.moveTo(0, -r * 0.8);
-        ctx.lineTo(r * 0.25, -r * 1.5);
-        ctx.lineTo(-r * 0.25, -r * 1.5);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      }
-      break;
-    }
-
-    case "stealth": {
-      // ghostly wispy ring with inner core
-      ctx.globalAlpha = 0.7;
-      ctx.strokeStyle = c;
-      ctx.lineWidth = 1.5;
-      for (let i = 0; i < 3; i++) {
-        const a = tick * 0.05 * (i % 2 === 0 ? 1 : -1);
-        ctx.save();
-        ctx.rotate(a);
-        ctx.beginPath();
-        ctx.ellipse(0, 0, r, r * 0.55, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.globalAlpha = 0.5;
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      break;
-    }
-
-    case "spread": {
-      // flower/brood shape — petals
-      for (let i = 0; i < 6; i++) {
-        const a = tick * 0.02 + i * (Math.PI / 3);
-        ctx.save();
-        ctx.rotate(a);
-        ctx.fillStyle = i % 2 === 0 ? c : "#f0abfc";
-        ctx.beginPath();
-        ctx.ellipse(0, -r * 0.7, r * 0.3, r * 0.45, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-
-    // ── Bosses ──────────────────────────────────────────────────────────────
-
-    case "boss_colossus": {
-      // thick armored walker
-      const pulse = 0.8 + 0.2 * Math.sin(tick * 0.1);
-      ctx.fillStyle = enemy.phaseTriggered ? "#ff2200" : c;
-      ctx.beginPath();
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        const rr = i % 2 === 0 ? r : r * 0.7;
-        i === 0
-          ? ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr)
-          : ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
-      }
-      ctx.closePath();
-      ctx.fill();
-      // armor rings
-      ctx.strokeStyle = "#94a3b8";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.85 * pulse, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.35, 0, Math.PI * 2);
-      ctx.fill();
-      if (enemy.phaseTriggered) {
-        ctx.globalAlpha = 0.4 + 0.3 * Math.sin(tick * 0.25);
-        ctx.strokeStyle = "#ff2200";
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc(0, 0, r + 6, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-      break;
-    }
-
-    case "boss_phantom": {
-      // stealth wraith with rotating rings
-      const rot = tick * 0.06;
-      for (let i = 0; i < 3; i++) {
-        ctx.save();
-        ctx.rotate(rot + i * ((Math.PI * 2) / 3));
-        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(tick * 0.08 + i);
-        ctx.strokeStyle = c;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, r * 1.1, r * 0.5, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.globalAlpha = 0.8;
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.7, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-
-    case "boss_titan": {
-      // hive hexagon + spawning indicator ring
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        i === 0
-          ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r)
-          : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-      }
-      ctx.closePath();
-      ctx.fill();
-      // inner cells
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        ctx.fillStyle = "#0f172a";
-        ctx.beginPath();
-        ctx.arc(
-          Math.cos(a) * r * 0.55,
-          Math.sin(a) * r * 0.55,
-          r * 0.22,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-      }
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
-      ctx.fill();
-      // spawn ring pulse
-      const spawnPulse = 0.3 + 0.4 * Math.abs(Math.sin(tick * 0.07));
-      ctx.globalAlpha = spawnPulse;
-      ctx.strokeStyle = "#fb923c";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(0, 0, r + 8, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      break;
-    }
-
-    case "boss_voidreaper": {
-      // void orb with dark tentacles
-      const rot = tick * 0.04;
-      for (let i = 0; i < 8; i++) {
-        const a = rot + i * (Math.PI / 4);
-        const len = r * (0.9 + 0.3 * Math.sin(tick * 0.1 + i));
-        ctx.save();
-        ctx.rotate(a);
-        ctx.strokeStyle = c;
-        ctx.lineWidth = 3;
-        ctx.globalAlpha = 0.6;
-        ctx.beginPath();
-        ctx.moveTo(0, -r * 0.5);
-        ctx.quadraticCurveTo(r * 0.4, -r * 0.7, 0, -len);
-        ctx.stroke();
-        ctx.restore();
-      }
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.65, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#0f172a";
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.32, 0, Math.PI * 2);
-      ctx.fill();
-      const glowAlpha = 0.4 + 0.3 * Math.sin(tick * 0.12);
-      ctx.globalAlpha = glowAlpha;
-      ctx.fillStyle = "#818cf8";
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.18, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      break;
-    }
-
-    default: {
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
+  // Boss pulse ring so they still feel big and threatening
+  if (enemy.isBoss) {
+    const pulse = 0.3 + 0.2 * Math.sin(tick * 0.1);
+    ctx.globalAlpha = pulse;
+    ctx.strokeStyle = enemy.phaseTriggered ? "#ff2200" : enemy.color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
+
+  // Phase 2 flare
+  if (enemy.phaseTriggered) {
+    ctx.globalAlpha = 0.35 + 0.2 * Math.sin(tick * 0.25);
+    ctx.fillStyle = "#ff2200";
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Stealth shimmer ring
+  if (enemy.stealth) {
+    ctx.globalAlpha = 0.4;
+    ctx.strokeStyle = enemy.color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+
+  // Healer orbit dots (keep the feel without the cross shape)
+  if (enemy.type === "healer") {
+    const orbitAngle = tick * 0.08;
+    for (let i = 0; i < 3; i++) {
+      const a = orbitAngle + i * ((Math.PI * 2) / 3);
+      ctx.fillStyle = "#86efac";
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.arc(
+        Math.cos(a) * r * 1.2,
+        Math.sin(a) * r * 1.2,
+        r * 0.2,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Speed trail for fast enemies
+  if (enemy.type === "fast") {
+    ctx.globalAlpha = 0.2;
+    ctx.fillStyle = enemy.color;
+    for (let i = 1; i <= 3; i++) {
+      ctx.beginPath();
+      ctx.arc(0, r * i * 0.6, r * 0.25 * (1 - i * 0.25), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Emoji — boss gets larger font
+  const fontSize = r * (enemy.isBoss ? 2.6 : 2.1);
+  ctx.font = `${fontSize}px serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(enemy.icon || "👾", 0, 1);
 
   ctx.shadowBlur = 0;
 }
@@ -3121,56 +5273,72 @@ function _drawProjectile(ctx, p, tick) {
 
   switch (p.towerType) {
     case "basic": {
-      // glowing green bullet with short trail
+      // ── Gatling bolt — rapid energy pulse (bolt-style like laser) ─────────
+      const angle = Math.atan2(p.vy, p.vx);
+      ctx.save();
       ctx.shadowColor = p.color;
-      ctx.shadowBlur = 8;
-      for (let t = 1; t <= 4; t++) {
-        ctx.globalAlpha = (0.15 * (5 - t)) / 4;
-        ctx.fillStyle = p.color;
-        ctx.beginPath();
-        ctx.arc(
-          p.x - p.vx * t * 1.2,
-          p.y - p.vy * t * 1.2,
-          p.size * (1 - t * 0.18),
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff";
-      ctx.beginPath();
-      ctx.arc(
-        p.x - p.size * 0.3,
-        p.y - p.size * 0.3,
-        p.size * 0.28,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
-      break;
-    }
-
-    case "sniper": {
-      // white tracer streak — thin and fast
-      ctx.shadowColor = "#ffffff";
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = 6;
+      // Trailing energy line
       ctx.strokeStyle = p.color;
       ctx.lineWidth = 1.5;
-      ctx.globalAlpha = 0.7;
+      ctx.globalAlpha = 0.55;
       ctx.beginPath();
-      ctx.moveTo(p.x - p.vx * 5, p.y - p.vy * 5);
+      ctx.moveTo(p.x - Math.cos(angle) * 10, p.y - Math.sin(angle) * 10);
       ctx.lineTo(p.x, p.y);
       ctx.stroke();
+      // Bright leading tip
       ctx.globalAlpha = 1;
       ctx.fillStyle = "#ffffff";
       ctx.beginPath();
       ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
       ctx.fill();
+      // Color core
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(
+        p.x - Math.cos(angle) * 3,
+        p.y - Math.sin(angle) * 3,
+        1.5,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+      ctx.restore();
+      break;
+    }
+
+    case "sniper": {
+      // ── High-velocity slug — elongated metallic bullet ────────────────────
+      const angle = Math.atan2(p.vy, p.vx);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(angle);
+      ctx.shadowColor = "#c0c0c0";
+      ctx.shadowBlur = 6;
+      // Casing body — elongated silver cylinder
+      const grad = ctx.createLinearGradient(-8, -1.5, 8, 1.5);
+      grad.addColorStop(0, "#94a3b8");
+      grad.addColorStop(0.4, "#e2e8f0");
+      grad.addColorStop(1, "#475569");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.roundRect(-8, -1.5, 14, 3, 1);
+      ctx.fill();
+      // Tip
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.moveTo(6, 0);
+      ctx.lineTo(10, -1.5);
+      ctx.lineTo(10, 1.5);
+      ctx.closePath();
+      ctx.fill();
+      // Vapor trail
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = "#e2e8f0";
+      ctx.beginPath();
+      ctx.roundRect(-18, -1, 10, 2, 1);
+      ctx.fill();
+      ctx.restore();
       break;
     }
 
@@ -3208,31 +5376,53 @@ function _drawProjectile(ctx, p, tick) {
     }
 
     case "laser": {
-      // beam line from origin to tip
-      const dx = p.x - (p.originX || p.x);
-      const dy = p.y - (p.originY || p.y);
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len > 1) {
-        ctx.shadowColor = p.color;
-        ctx.shadowBlur = 12;
+      // ── Energy bolt — traveling spark from origin ─────────────────────────
+      const angle = Math.atan2(p.vy, p.vx);
+      ctx.save();
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 10;
+
+      // Draw full path from origin to current tip if origin is stored
+      if (
+        p.originX !== undefined &&
+        Math.abs(p.x - p.originX) + Math.abs(p.y - p.originY) > 4
+      ) {
         ctx.strokeStyle = p.color;
-        ctx.lineWidth = 3;
-        ctx.globalAlpha = 0.8;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.5;
         ctx.beginPath();
-        ctx.moveTo(p.originX || p.x, p.originY || p.y);
+        ctx.moveTo(p.originX, p.originY);
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
+        // White core line
         ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1;
-        ctx.globalAlpha = 0.5;
+        ctx.lineWidth = 0.8;
+        ctx.globalAlpha = 0.3;
+        ctx.stroke();
+      } else {
+        // Short bolt trail
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath();
+        ctx.moveTo(p.x - Math.cos(angle) * 14, p.y - Math.sin(angle) * 14);
+        ctx.lineTo(p.x, p.y);
         ctx.stroke();
       }
+
+      // Bright leading tip
       ctx.globalAlpha = 1;
-      ctx.fillStyle = "#fff";
-      ctx.shadowBlur = 4;
+      ctx.fillStyle = "#ffffff";
       ctx.beginPath();
       ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
       ctx.fill();
+      // Color glow dot
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = 0.8;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
       break;
     }
 
@@ -3298,6 +5488,44 @@ function _drawProjectile(ctx, p, tick) {
       break;
     }
 
+    case "missile": {
+      const angle = Math.atan2(p.vy, p.vx);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(angle);
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 14;
+      // Body
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-3, -2, 13, 4);
+      // Nose
+      ctx.beginPath();
+      ctx.moveTo(10, 0);
+      ctx.lineTo(14, -3);
+      ctx.lineTo(14, 3);
+      ctx.closePath();
+      ctx.fill();
+      // Exhaust
+      ctx.globalAlpha = 0.7;
+      ctx.fillStyle = "#fbbf24";
+      ctx.beginPath();
+      ctx.moveTo(-3, 0);
+      ctx.lineTo(-11, -2.5);
+      ctx.lineTo(-11, 2.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = "#f97316";
+      ctx.beginPath();
+      ctx.moveTo(-3, 0);
+      ctx.lineTo(-17, -1.5);
+      ctx.lineTo(-17, 1.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      break;
+    }
+
     default: {
       ctx.fillStyle = p.color;
       ctx.beginPath();
@@ -3328,13 +5556,13 @@ function _calcKillXp(tower, enemy) {
   }
   // Normal kills: small flat amount, role-adjusted
   const normalXp = {
-    basic: 1.2,
-    sniper: 2.0,
-    cannon: 0.8,
-    laser: 0.6,
+    basic: 1.6,
+    sniper: 2.6,
+    cannon: 1.1,
+    laser: 0.89,
     freeze: 0.4,
-    tesla: 1.0,
-    inferno: 0.9,
+    tesla: 1.4,
+    inferno: 1.2,
     vortex: 0.3,
   };
   return normalXp[tower.type] ?? 1.0;

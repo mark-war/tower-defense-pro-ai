@@ -7,6 +7,7 @@ import {
   TOWER_TYPES,
   ADMIN_CONFIG,
   ENDLESS_CONFIG,
+  ENEMY_EVOLUTIONS,
 } from "./gameConstants.js";
 
 const CFG = ADMIN_CONFIG.ai;
@@ -74,6 +75,10 @@ export class WaveAI {
     this.adaptationLog = [];
     this.currentWave = 0;
     this.exploitAttempts = {};
+
+    this.killsByTowerVsEnemy = {}; // "towerType:enemyType" -> killCount
+    this.activeEvolutions = {}; // enemyType -> [evolutionId]
+    this.pendingEvolutionAlert = null;
 
     this._applyGlobalMemory();
   }
@@ -285,16 +290,22 @@ export class WaveAI {
 
     const plan = counterMap[threat];
     const topDamageTower = this._getTopDamageTowerType(damageByTower);
-    const primaryOnline = plan ? (currentTowerCounts[plan.primary] || 0) > 0 : false;
+    const primaryOnline = plan
+      ? (currentTowerCounts[plan.primary] || 0) > 0
+      : false;
     const alternateOnline = plan
       ? plan.alternates.some((type) => (currentTowerCounts[type] || 0) > 0)
       : false;
     const answeredWithDamage = plan
-      ? topDamageTower === plan.primary || plan.alternates.includes(topDamageTower)
+      ? topDamageTower === plan.primary ||
+        plan.alternates.includes(topDamageTower)
       : false;
 
     let result = "stalled";
-    if (enemiesLeaked === 0 && (primaryOnline || alternateOnline || answeredWithDamage)) {
+    if (
+      enemiesLeaked === 0 &&
+      (primaryOnline || alternateOnline || answeredWithDamage)
+    ) {
       result = "countered";
     } else if (enemiesLeaked === 0) {
       result = "stabilized";
@@ -335,6 +346,41 @@ export class WaveAI {
     return Math.min(totalDist / count / 15, 1);
   }
 
+  recordEnemyKill(towerType, enemyType) {
+    if (!towerType || !enemyType || enemyType.startsWith("boss_")) return;
+    const key = `${towerType}:${enemyType}`;
+    this.killsByTowerVsEnemy[key] = (this.killsByTowerVsEnemy[key] || 0) + 1;
+
+    const threshold = ADMIN_CONFIG.enemyEvolution?.killThresholdPerType || 80;
+    const maxEvo = ADMIN_CONFIG.enemyEvolution?.maxEvolutionsPerType || 2;
+
+    if (this.killsByTowerVsEnemy[key] === threshold) {
+      const evoKey = `${enemyType}_vs_${towerType}`;
+      const evoDef = ENEMY_EVOLUTIONS[evoKey];
+      if (!evoDef) return;
+
+      const existing = this.activeEvolutions[enemyType] || [];
+      if (existing.length >= maxEvo) return;
+      if (existing.includes(evoKey)) return;
+
+      existing.push(evoKey);
+      this.activeEvolutions[enemyType] = existing;
+      this.pendingEvolutionAlert = evoDef;
+
+      // Update global memory so cross-game it remembers what worked
+      GLOBAL_MEMORY.weaknessSuccessRate[enemyType] = Math.min(
+        1,
+        (GLOBAL_MEMORY.weaknessSuccessRate[enemyType] || 0.5) + 0.15,
+      );
+    }
+  }
+
+  getActiveEvolutionsForType(enemyType) {
+    return (this.activeEvolutions[enemyType] || [])
+      .map((id) => ENEMY_EVOLUTIONS[id])
+      .filter(Boolean);
+  }
+
   // ── Generate wave ─────────────────────────────────────────────────────────
   generateWave(waveNumber, totalWaves) {
     this.currentWave = waveNumber;
@@ -359,6 +405,14 @@ export class WaveAI {
       1 +
       waveNumber *
         (isEndless ? CFG.endlessSpeedPerWave : CFG.enemySpeedPerWave);
+
+    const lateGameFactor =
+      waveNumber > 20
+        ? Math.pow(CFG.lateGameExpScale || 1.18, (waveNumber - 20) / 10)
+        : 1;
+
+    const finalHpMult = hpMult * lateGameFactor;
+    const finalSpeedMult = speedMult * (1 + (lateGameFactor - 1) * 0.5);
 
     let bossType = this.bossWaves[waveNumber] || null;
     if (!bossType) bossType = this._endlessBossForWave(waveNumber);
@@ -392,8 +446,8 @@ export class WaveAI {
         waveNumber,
         comp,
         baseCount,
-        hpMult,
-        speedMult,
+        finalHpMult,
+        finalSpeedMult,
         finalMessage,
         bossType,
         progress,
@@ -404,8 +458,8 @@ export class WaveAI {
       waveNumber,
       plan.composition,
       baseCount,
-      hpMult,
-      speedMult,
+      finalHpMult,
+      finalSpeedMult,
       finalMessage,
       bossType,
       progress,
@@ -438,6 +492,14 @@ export class WaveAI {
     if (w.includes("swarm")) reqs["cannon"] = Math.max(reqs["cannon"] || 0, 2);
     if (w.includes("fast")) reqs["freeze"] = Math.max(reqs["freeze"] || 0, 2);
     if (w.includes("stealth")) reqs["laser"] = Math.max(reqs["laser"] || 0, 1);
+
+    // Healer presence — any single-target tower can focus it, sniper best
+    if (
+      this.lastEnemyTypes?.includes("healer") ||
+      (this.waveHistory.length > 0 && this.wave > 3)
+    )
+      reqs["sniper"] = Math.max(reqs["sniper"] || 0, 1);
+
     if (w.includes("armored"))
       reqs["sniper"] = Math.max(reqs["sniper"] || 0, 2);
 
@@ -458,7 +520,12 @@ export class WaveAI {
         ) || weaknesses[0];
       this.exploitAttempts[targeted] =
         (this.exploitAttempts[targeted] || 0) + 1;
-      return this._exploitWeakness(targeted, waveNumber);
+      const plan = this._exploitWeakness(targeted, waveNumber);
+      // Append healer warning if healer is in this composition
+      if (plan.composition.some((c) => c.type === "healer")) {
+        plan.message += " ⚕ HEALER incoming — kill it first!";
+      }
+      return plan;
     }
 
     if (progress >= 0.5 && progress < 0.75) {
@@ -471,7 +538,11 @@ export class WaveAI {
           ];
         this.exploitAttempts[targeted] =
           (this.exploitAttempts[targeted] || 0) + 1;
-        return this._exploitWeakness(targeted, waveNumber);
+        const plan = this._exploitWeakness(targeted, waveNumber);
+        if (plan.composition.some((c) => c.type === "healer")) {
+          plan.message += " ⚕ HEALER incoming — kill it first!";
+        }
+        return plan;
       }
     }
 
@@ -492,6 +563,7 @@ export class WaveAI {
       swarm: [
         { type: "swarm", weight: 10 },
         { type: "fast", weight: 5 },
+        { type: "healer", weight: 3 },
       ],
       fast: [
         { type: "fast", weight: 10 },
@@ -500,6 +572,7 @@ export class WaveAI {
       armored: [
         { type: "armored", weight: 10 },
         { type: "basic", weight: 3 },
+        { type: "healer", weight: 3 },
       ],
       stealth: [
         { type: "stealth", weight: 10 },
@@ -550,6 +623,7 @@ export class WaveAI {
           { type: "armored", weight: 6 },
           { type: "basic", weight: 3 },
           { type: "fast", weight: 1 },
+          { type: "healer", weight: 2 },
         ],
         message: `⚠ COLOSSUS: Armored escort inbound. Tesla required.`,
       },
@@ -564,6 +638,7 @@ export class WaveAI {
         composition: [
           { type: "swarm", weight: 8 },
           { type: "basic", weight: 4 },
+          { type: "healer", weight: 2 },
         ],
         message: `⚠ TITAN HIVE: Swarm carpet. Cannon splash critical.`,
       },
@@ -727,8 +802,9 @@ export class WaveAI {
       ],
       [
         { type: "armored", weight: 4 },
-        { type: "basic", weight: 4 },
+        { type: "basic", weight: 3 },
         { type: "stealth", weight: 2 },
+        { type: "healer", weight: 1 },
       ],
       [
         { type: "spread", weight: 3 },
@@ -739,6 +815,12 @@ export class WaveAI {
         { type: "stealth", weight: 5 },
         { type: "fast", weight: 3 },
         { type: "basic", weight: 2 },
+        { type: "healer", weight: 2 },
+      ],
+      [
+        { type: "swarm", weight: 6 },
+        { type: "basic", weight: 3 },
+        { type: "healer", weight: 2 },
       ],
     ];
     const gamesStr =
@@ -785,9 +867,11 @@ export class WaveAI {
 
     const rewardMult = 1 + Math.sqrt(waveNumber - 1) * 0.2;
 
-    const GROUP_SIZE = 4;
-    const INTRA_DELAY = 10;
-    const INTER_DELAY = 65;
+    // Compress spawn timing at higher waves — by wave 60 it's nearly continuous
+    const waveComp = Math.max(0.18, 1 - (waveNumber - 1) * 0.009);
+    const GROUP_SIZE = Math.min(10, 4 + Math.floor(waveNumber / 15));
+    const INTRA_DELAY = Math.max(2, Math.round(10 * waveComp));
+    const INTER_DELAY = Math.max(10, Math.round(65 * waveComp));
 
     for (const entry of validComp) {
       const count = Math.max(
@@ -923,6 +1007,39 @@ export class WaveAI {
           lane: secondLane,
         });
       }
+    }
+
+    // ── Redistribute healers near heavy enemies (armored/spread/basic) ────────
+    // Key fix: sort anchors by delay ascending and pick from FIRST half so
+    // healers spawn in the opening/mid of the wave, not the tail.
+    const healerList = enemies.filter((e) => e.type === "healer");
+    const nonHealerNonBoss = enemies
+      .filter((e) => e.type !== "healer" && !e.isBoss)
+      .sort((a, b) => a.spawnDelay - b.spawnDelay);
+
+    if (healerList.length > 0 && nonHealerNonBoss.length > 0) {
+      // Prefer heavy-type anchors — healer is most useful here
+      const heavyTypes = new Set(["armored", "spread", "basic"]);
+      const heavyEarly = nonHealerNonBoss.filter((e) => heavyTypes.has(e.type));
+      // Fall back to all non-healer enemies if no heavy types present
+      const anchorPool = heavyEarly.length > 0 ? heavyEarly : nonHealerNonBoss;
+
+      // Only consider the FIRST 60% of the wave — healers should escort
+      // the opening push, not trickle in at the end
+      const earlySlice = anchorPool.slice(
+        0,
+        Math.max(1, Math.floor(anchorPool.length * 0.6)),
+      );
+
+      const interval = earlySlice.length / (healerList.length + 1);
+      healerList.forEach((healer, idx) => {
+        const targetIdx = Math.min(
+          Math.floor(interval * (idx + 1)),
+          earlySlice.length - 1,
+        );
+        // Spawn 4 ticks BEFORE anchor so healer arrives with the group
+        healer.spawnDelay = Math.max(0, earlySlice[targetIdx].spawnDelay - 4);
+      });
     }
 
     return {
@@ -1205,13 +1322,13 @@ export class WaveAI {
     return this._adjustForecastConfidence(
       fallbackByWeakness[primaryWeakness] ||
         this._makeForecast(
-        "Adaptive pressure",
-        "Mixed wave pattern likely",
-        recentAdaptation?.message ||
-          "The AI is still probing for the cleanest line of attack.",
-        "medium",
-        "mixed",
-      ),
+          "Adaptive pressure",
+          "Mixed wave pattern likely",
+          recentAdaptation?.message ||
+            "The AI is still probing for the cleanest line of attack.",
+          "medium",
+          "mixed",
+        ),
       lastCounterplay,
     );
   }
@@ -1224,7 +1341,10 @@ export class WaveAI {
     }
 
     const order = ["low", "medium", "high", "certain"];
-    const currentIndex = Math.max(0, order.indexOf(forecast.confidence || "medium"));
+    const currentIndex = Math.max(
+      0,
+      order.indexOf(forecast.confidence || "medium"),
+    );
     let nextIndex = currentIndex;
 
     if (lastCounterplay.result === "countered") {
@@ -1265,7 +1385,8 @@ export class WaveAI {
       stealth: {
         counter: "laser",
         altCounters: [],
-        build: "Add a Laser tower before the next wave or stealth units will slip through.",
+        build:
+          "Add a Laser tower before the next wave or stealth units will slip through.",
         upgrade:
           "Tower cap reached. Preserve your Laser coverage and upgrade it before the next wave.",
         replace:
@@ -1276,7 +1397,8 @@ export class WaveAI {
       swarm: {
         counter: "cannon",
         altCounters: ["vortex", "inferno"],
-        build: "Add Cannon coverage near a choke point to keep swarm pressure under control.",
+        build:
+          "Add Cannon coverage near a choke point to keep swarm pressure under control.",
         upgrade:
           "Tower cap reached. Upgrade your splash tower line and concentrate damage at the busiest choke.",
         replace:
@@ -1287,7 +1409,8 @@ export class WaveAI {
       fast: {
         counter: "freeze",
         altCounters: ["vortex"],
-        build: "Add Cryo coverage earlier on the path so fast units spend more time under fire.",
+        build:
+          "Add Cryo coverage earlier on the path so fast units spend more time under fire.",
         upgrade:
           "Tower cap reached. Upgrade your slowing coverage and make sure it triggers earlier on the route.",
         replace:
@@ -1298,7 +1421,8 @@ export class WaveAI {
       armored: {
         counter: "sniper",
         altCounters: ["tesla", "inferno"],
-        build: "Add Sniper or Tesla pressure so armor stops soaking your entire frontline.",
+        build:
+          "Add Sniper or Tesla pressure so armor stops soaking your entire frontline.",
         upgrade:
           "Tower cap reached. Upgrade your armor-piercing line instead of widening the build.",
         replace:
@@ -1309,7 +1433,8 @@ export class WaveAI {
       spread: {
         counter: "cannon",
         altCounters: ["inferno", "vortex"],
-        build: "Keep some splash coverage online and avoid stacking every tower in one cluster.",
+        build:
+          "Keep some splash coverage online and avoid stacking every tower in one cluster.",
         upgrade:
           "Tower cap reached. Strengthen your splash lane and spread your strongest towers across multiple zones.",
         replace:
@@ -1320,7 +1445,10 @@ export class WaveAI {
     };
 
     const plan = threatPlans[primaryWeakness];
-    const bossPlan = this._buildBossSuggestion(recentAdaptation, runtimeContext);
+    const bossPlan = this._buildBossSuggestion(
+      recentAdaptation,
+      runtimeContext,
+    );
     if (bossPlan) return bossPlan;
 
     if (!plan) {
@@ -1399,7 +1527,12 @@ export class WaveAI {
       return `Suggestion: ${bossDef.name} is approaching, but its best counter is locked on this level. Prepare burst abilities and strengthen your highest-damage lane.`;
     }
 
-    if (!hasWeaknessCounter && !atCap && weaknessTower && gold >= weaknessTower.cost) {
+    if (
+      !hasWeaknessCounter &&
+      !atCap &&
+      weaknessTower &&
+      gold >= weaknessTower.cost
+    ) {
       return `Suggestion: ${bossDef.name} is coming. Build ${weaknessTower.name} now to answer its weakness cleanly.`;
     }
 
@@ -1425,3 +1558,12 @@ export class WaveAI {
   }
 }
 
+export function _weightedRandom(items) {
+  const totalWeight = items.reduce((sum, m) => sum + (m.weight || 1), 0);
+  let roll = Math.random() * totalWeight;
+  for (const item of items) {
+    roll -= item.weight || 1;
+    if (roll <= 0) return item;
+  }
+  return items[items.length - 1];
+}

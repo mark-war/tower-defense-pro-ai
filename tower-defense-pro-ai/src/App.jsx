@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GameEngine } from "./GameEngine.js";
 import { HUD } from "./HUD.jsx";
-import { CELL_SIZE, ACHIEVEMENTS } from "./gameConstants.js";
+import { CELL_SIZE, ACHIEVEMENTS, MAPS } from "./gameConstants.js";
+import MapSelectScreen from "./MapSelectScreen.jsx";
 
 const LS_SAVE = "towerDefense_save";
 const LS_SCORES = "towerDefense_highScores";
@@ -51,14 +52,12 @@ function saveProfile(profile) {
 function getFavoriteTowerFromCounts(towerCounts) {
   let favoriteTower = null;
   let topCount = -1;
-
   for (const [towerType, count] of Object.entries(towerCounts || {})) {
     if (count > topCount) {
       favoriteTower = towerType;
       topCount = count;
     }
   }
-
   return favoriteTower;
 }
 
@@ -77,7 +76,6 @@ function buildUpdatedProfile(profile, gameState) {
     (sum, tower) => sum + (tower.kills || 0),
     0,
   );
-
   return {
     ...base,
     stats: {
@@ -118,6 +116,10 @@ function addHighScore(entry) {
   return top;
 }
 
+const isTouchDevice =
+  typeof window !== "undefined" &&
+  ("ontouchstart" in window || navigator.maxTouchPoints > 0);
+
 export default function App() {
   const canvasRef = useRef(null);
   const engineRef = useRef(null);
@@ -145,6 +147,20 @@ export default function App() {
 
   const [showAchievements, setShowAchievements] = useState(false);
 
+  // ── HUD visibility and mobile state ──────────────────────────────────────────────────────────
+  const [hudVisible, setHudVisible] = useState(false);
+  const [isMobile, setIsMobile] = useState(
+    () => isTouchDevice || window.innerWidth < 1024,
+  );
+
+  // ── Map select state ──────────────────────────────────────────────────────────
+  const [showMapSelect, setShowMapSelect] = useState(false);
+  const pendingLevelIdRef = useRef(null); // level to reset to after map chosen
+
+  // ── Bottom Bar state ──────────────────────────────────────────────────────────
+  const [bottomBarVisible, setBottomBarVisible] = useState(true);
+  const bottomBarTimerRef = useRef(null);
+
   // ── Boot ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -169,6 +185,45 @@ export default function App() {
     }
   }, [gameState?.state, gameState?.wave]);
 
+  // ── Mobile Resize ─────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(isTouchDevice || window.innerWidth < 1024);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  const showBottomBar = useCallback(() => {
+    clearTimeout(bottomBarTimerRef.current);
+    setBottomBarVisible(true);
+
+    // Only auto-hide during a wave
+    if (gameState?.state === "wave") {
+      bottomBarTimerRef.current = setTimeout(() => {
+        setBottomBarVisible(false);
+      }, 3000);
+    }
+  }, [gameState?.state]);
+
+  useEffect(() => {
+    if (
+      gameState?.state === "idle" ||
+      gameState?.state === "gameover" ||
+      gameState?.state === "victory"
+    ) {
+      clearTimeout(bottomBarTimerRef.current);
+      setTimeout(() => setBottomBarVisible(true), 0);
+    }
+    if (gameState?.state === "wave") {
+      setTimeout(() => showBottomBar(), 0);
+    }
+  }, [gameState?.state, showBottomBar]);
+
+  useEffect(() => {
+    return () => clearTimeout(bottomBarTimerRef.current);
+  }, []);
+
   // ── Achievement toast queue ──────────────────────────────────────────────────
   const isShowingToastRef = useRef(false);
   const showNextAchievementRef = useRef(null);
@@ -176,14 +231,11 @@ export default function App() {
   const showNextAchievement = useCallback(() => {
     if (isShowingToastRef.current) return;
     if (achievementQueueRef.current.length === 0) return;
-
     const id = achievementQueueRef.current.shift();
     const def = ACHIEVEMENTS[id];
     if (!def) return;
-
     isShowingToastRef.current = true;
     setAchievementToast(def);
-
     toastTimerRef.current = setTimeout(() => {
       setAchievementToast(null);
       isShowingToastRef.current = false;
@@ -258,7 +310,6 @@ export default function App() {
         won: gsState === "victory",
         date: new Date().toLocaleDateString(),
       });
-      // Defer state updates to avoid synchronous setState inside an effect body
       setTimeout(() => {
         setPlayerProfile(nextProfile);
         setHighScores(updated);
@@ -327,7 +378,7 @@ export default function App() {
       setSaveToast("⚠ Save data corrupt.");
       setTimeout(() => setSaveToast(""), 2500);
     }
-  }, [loadWarning]); // ← add loadWarning
+  }, [loadWarning]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -380,35 +431,12 @@ export default function App() {
     setTimeout(() => setSaveToast(""), 2200);
   }, [profileName, playerProfile]);
 
-  // ── Keyboard shortcuts ────────────────────────────────────────────────────────
-  useEffect(() => {
-    const onKey = (e) => {
-      const eng = engineRef.current;
-      if (!eng) return;
-      // Pause: Space or P (not when typing in inputs)
-      if (
-        (e.code === "Space" || e.code === "KeyP") &&
-        !["INPUT", "TEXTAREA"].includes(e.target.tagName)
-      ) {
-        e.preventDefault();
-        eng.togglePause();
-      }
-      // Quick-save: Ctrl+S
-      if (e.code === "KeyS" && e.ctrlKey) {
-        e.preventDefault();
-        handleSave();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []); // eslint-disable-line
-
   // ── Pause ─────────────────────────────────────────────────────────────────────
   const handlePause = useCallback(() => {
     engineRef.current?.togglePause();
   }, []);
 
-  // ── Cell coordinate helper ─────────────────────────────────────────────────────
+  // ── Cell coordinate helper ────────────────────────────────────────────────────
   const getCell = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     const scaleX = canvasRef.current.width / rect.width;
@@ -419,11 +447,13 @@ export default function App() {
     };
   }, []);
 
-  // ── Canvas click ───────────────────────────────────────────────────────────────
+  // ── Canvas click ──────────────────────────────────────────────────────────────
   const handleClick = useCallback(
     (e) => {
+      showBottomBar();
+
       if (!engineRef.current) return;
-      if (gameState?.paused) return; // ignore clicks while paused
+      if (gameState?.paused) return;
 
       const rect = canvasRef.current.getBoundingClientRect();
       const px = e.clientX - rect.left;
@@ -448,7 +478,15 @@ export default function App() {
         }));
       } else {
         const placed = engineRef.current.placeTower(col, row);
-        if (!placed && engineRef.current.grid[row]?.[col]) {
+        if (placed) {
+          // ← switch to upgrade tab showing the tower just placed
+          engineRef.current.selectTowerCell(col, row);
+          setActiveTab("upgrade");
+          setGameState((s) => ({
+            ...s,
+            selectedTowerCell: engineRef.current.selectedTowerCell,
+          }));
+        } else if (!placed && engineRef.current.grid[row]?.[col]) {
           engineRef.current.selectTowerCell(col, row);
           setActiveTab("upgrade");
           setGameState((s) => ({
@@ -458,7 +496,14 @@ export default function App() {
         }
       }
     },
-    [sellMode, activeTab, getCell, gameState?.state, gameState?.paused],
+    [
+      sellMode,
+      activeTab,
+      getCell,
+      gameState?.state,
+      gameState?.paused,
+      showBottomBar,
+    ],
   );
 
   const handleMouseMove = useCallback(
@@ -474,7 +519,7 @@ export default function App() {
     engineRef.current?.setHoveredCell(-1, -1);
   }, []);
 
-  // ── HUD handlers ───────────────────────────────────────────────────────────────
+  // ── HUD handlers ──────────────────────────────────────────────────────────────
   const handleSelectTower = useCallback((type) => {
     setSelected(type);
     setSellMode(false);
@@ -488,37 +533,136 @@ export default function App() {
     engineRef.current?.startWave();
   }, []);
 
-  const handleReset = useCallback(
-    (levelId) => {
-      if (!engineRef.current) return;
-      const id = levelId || currentLevel;
-      setCurrentLevel(id);
-      setSellMode(false);
-      scoreRecordedRef.current = false;
-      engineRef.current.reset(id);
-      const firstTower = engineRef.current.levelConfig?.unlockedTowers?.[0];
-      if (firstTower) {
-        setSelected(firstTower);
-        engineRef.current.setSelectedTowerType(firstTower);
+  // ── Touch Handlers ──────────────────────────────────────────────────────────────
+  const handleTouchStart = useCallback(
+    (e) => {
+      showBottomBar();
+      if (!engineRef.current || gameState?.paused) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const rect = canvasRef.current.getBoundingClientRect();
+      const px = touch.clientX - rect.left;
+      const py = touch.clientY - rect.top;
+      const scaleX = canvasRef.current.width / rect.width;
+      const scaleY = canvasRef.current.height / rect.height;
+      const col = Math.floor((px * scaleX) / CELL_SIZE);
+      const row = Math.floor((py * scaleY) / CELL_SIZE);
+
+      if (gameState?.state === "wave") {
+        const enemy = engineRef.current?.getEnemyAtPixel(px, py);
+        if (enemy) {
+          setInspectedEnemy(enemy);
+          return;
+        }
       }
-      setGameState((s) => ({ ...s, selectedTowerCell: null }));
+      if (sellMode) {
+        engineRef.current.sellTower(col, row);
+      } else if (activeTab === "upgrade") {
+        engineRef.current.selectTowerCell(col, row);
+        setGameState((s) => ({
+          ...s,
+          selectedTowerCell: engineRef.current.selectedTowerCell,
+        }));
+      } else {
+        const placed = engineRef.current.placeTower(col, row);
+        if (placed) {
+          // ← switch to upgrade tab showing the tower just placed
+          engineRef.current.selectTowerCell(col, row);
+          setActiveTab("upgrade");
+          setGameState((s) => ({
+            ...s,
+            selectedTowerCell: engineRef.current.selectedTowerCell,
+          }));
+        } else if (!placed && engineRef.current.grid[row]?.[col]) {
+          engineRef.current.selectTowerCell(col, row);
+          setActiveTab("upgrade");
+          setGameState((s) => ({
+            ...s,
+            selectedTowerCell: engineRef.current.selectedTowerCell,
+          }));
+        }
+      }
     },
-    [currentLevel],
+    [sellMode, activeTab, gameState?.state, gameState?.paused, showBottomBar],
   );
 
-  const handleLevelSelect = useCallback((levelId) => {
+  const handleTouchMove = useCallback((e) => {
+    if (!engineRef.current) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+    const col = Math.floor(((touch.clientX - rect.left) * scaleX) / CELL_SIZE);
+    const row = Math.floor(((touch.clientY - rect.top) * scaleY) / CELL_SIZE);
+    engineRef.current.setHoveredCell(col, row);
+  }, []);
+
+  // ── Level select — intercepts endless to show map picker ─────────────────────
+  const _doReset = useCallback((levelId) => {
+    if (!engineRef.current) return;
     setCurrentLevel(levelId);
     setSellMode(false);
-    setActiveTab("build");
     scoreRecordedRef.current = false;
-    engineRef.current?.reset(levelId);
-    const firstTower = engineRef.current?.levelConfig?.unlockedTowers?.[0];
+    engineRef.current.reset(levelId);
+    const firstTower = engineRef.current.levelConfig?.unlockedTowers?.[0];
     if (firstTower) {
       setSelected(firstTower);
-      engineRef.current?.setSelectedTowerType(firstTower);
+      engineRef.current.setSelectedTowerType(firstTower);
     }
     setGameState((s) => ({ ...s, selectedTowerCell: null }));
   }, []);
+
+  const handleReset = useCallback(
+    (levelId) => {
+      const id = levelId ?? currentLevel;
+      if (id === 99) {
+        // Endless — show map picker first
+        pendingLevelIdRef.current = id;
+        setShowMapSelect(true);
+      } else {
+        _doReset(id);
+      }
+    },
+    [currentLevel, _doReset],
+  );
+
+  const handleLevelSelect = useCallback((levelId) => {
+    setActiveTab("build");
+    if (levelId === 99) {
+      pendingLevelIdRef.current = levelId;
+      setShowMapSelect(true);
+    } else {
+      setCurrentLevel(levelId);
+      setSellMode(false);
+      setActiveTab("build");
+      scoreRecordedRef.current = false;
+      engineRef.current?.reset(levelId);
+      const firstTower = engineRef.current?.levelConfig?.unlockedTowers?.[0];
+      if (firstTower) {
+        setSelected(firstTower);
+        engineRef.current?.setSelectedTowerType(firstTower);
+      }
+      setGameState((s) => ({ ...s, selectedTowerCell: null }));
+    }
+  }, []);
+
+  // ── Map select confirmed ──────────────────────────────────────────────────────
+  const handleMapSelected = useCallback(
+    (mapKey, mapDef) => {
+      setShowMapSelect(false);
+      const levelId = pendingLevelIdRef.current ?? 99;
+
+      // First do a normal reset so the engine is clean
+      _doReset(levelId);
+
+      // Then swap the map definition in
+      if (engineRef.current) {
+        engineRef.current.startEndlessWithMap(mapDef);
+      }
+    },
+    [_doReset],
+  );
 
   const handleSetTab = useCallback((tab) => setActiveTab(tab), []);
 
@@ -540,6 +684,14 @@ export default function App() {
     setActiveTab("upgrade");
   }, []);
 
+  const handleRepairTower = useCallback((col, row) => {
+    engineRef.current?.repairTower(col, row);
+  }, []);
+
+  const handleRepairAll = useCallback(() => {
+    engineRef.current?.repairAllTowers();
+  }, []);
+
   const handleFortify = useCallback(() => {
     engineRef.current?.fortify();
   }, []);
@@ -559,14 +711,23 @@ export default function App() {
         height: "100vh",
         overflow: "hidden",
         background: "#0a0a0f",
+        position: "relative",
       }}
     >
+      {/* ── Map select screen (renders over everything) ───────────────────── */}
+      {showMapSelect && (
+        <MapSelectScreen
+          onSelect={handleMapSelected}
+          onBack={() => setShowMapSelect(false)}
+        />
+      )}
+
       {/* Toast */}
       {saveToast && (
         <div
           style={{
             position: "fixed",
-            top: 16,
+            top: 70,
             left: "50%",
             transform: "translateX(-50%)",
             zIndex: 9999,
@@ -674,12 +835,12 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Achievement toast ──────────────────────────────────────────────── */}
+      {/* ── Achievement toast ─────────────────────────────────────────────── */}
       {achievementToast && (
         <div
           style={{
             position: "fixed",
-            bottom: 24,
+            bottom: 90,
             left: "50%",
             transform: "translateX(-50%)",
             zIndex: 9999,
@@ -719,7 +880,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Load warning dialog ────────────────────────────────────────────── */}
+      {/* ── Load warning dialog ───────────────────────────────────────────── */}
       {loadWarning && (
         <div
           style={{
@@ -791,7 +952,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Run Summary Modal ──────────────────────────────────────────────── */}
+      {/* ── Run Summary Modal ─────────────────────────────────────────────── */}
       {showRunSummary && gameState && (
         <RunSummaryModal
           gameState={gameState}
@@ -824,13 +985,318 @@ export default function App() {
           onClick={handleClick}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={(e) => e.preventDefault()}
           style={{
             maxWidth: "100%",
             maxHeight: "100%",
             imageRendering: "pixelated",
+            touchAction: "none",
           }}
         />
+
+        {/* ── FLOATING OVERLAY ── */}
+        {gameState && (
+          <>
+            {/* Top bar — always visible */}
+            <div
+              style={{
+                position: "fixed",
+                top: 10,
+                left: 10,
+                right: 10,
+                zIndex: 100,
+                display: "flex",
+                gap: 6,
+                pointerEvents: "none",
+              }}
+            >
+              {[
+                { label: "GOLD", val: `${gameState.gold}g`, c: "#facc15" },
+                {
+                  label: "LIVES",
+                  val: gameState.lives,
+                  c:
+                    gameState.lives <= 3
+                      ? "#ef4444"
+                      : gameState.lives <= 7
+                        ? "#f97316"
+                        : "#4ade80",
+                },
+                {
+                  label: "WAVE",
+                  val: `${gameState.wave}/${gameState.totalWaves}`,
+                  c: gameState.isEndless ? "#818cf8" : "#38bdf8",
+                },
+                {
+                  label: "SCORE",
+                  val:
+                    gameState.score > 9999
+                      ? `${Math.floor(gameState.score / 1000)}k`
+                      : gameState.score,
+                  c: "#a78bfa",
+                },
+              ].map(({ label, val, c }) => (
+                <div
+                  key={label}
+                  style={{
+                    flex: 1,
+                    background: "rgba(6,6,16,0.82)",
+                    border: "1px solid #1e293b",
+                    borderRadius: 5,
+                    padding: "4px 6px",
+                    textAlign: "center",
+                    fontFamily: mono,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 7,
+                      color: "#475569",
+                      letterSpacing: "0.08em",
+                    }}
+                  >
+                    {label}
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: "bold", color: c }}>
+                    {val}
+                  </div>
+                </div>
+              ))}
+
+              {/* HUD toggle — top right */}
+              <button
+                onClick={() => setHudVisible((v) => !v)}
+                style={{
+                  background: "rgba(6,6,16,0.82)",
+                  border: "1px solid #334155",
+                  borderRadius: 5,
+                  color: "#94a3b8",
+                  fontFamily: mono,
+                  fontSize: 11,
+                  cursor: "pointer",
+                  padding: "4px 10px",
+                  pointerEvents: "all",
+                }}
+              >
+                {hudVisible ? "✕" : "☰"}
+              </button>
+            </div>
+
+            {/* Bottom bar */}
+            <div
+              style={{
+                position: "fixed",
+                bottom: 10,
+                left: 10,
+                right: 10,
+                zIndex: 100,
+                display: "flex",
+                gap: 6,
+                alignItems: "stretch",
+                transform: bottomBarVisible
+                  ? "translateY(0)"
+                  : "translateY(120%)",
+                transition: "transform 0.3s ease",
+                pointerEvents: bottomBarVisible ? "all" : "none",
+              }}
+            >
+              {/* Abilities — shown during wave AND idle (grayed out when not ready) */}
+              <div style={{ display: "flex", gap: 5, flex: 1 }}>
+                {Object.entries(gameState.abilities || {}).map(([key, ab]) => {
+                  const ready =
+                    ab.cooldownLeft === 0 && gameState.state === "wave";
+                  const pct = Math.max(0, 1 - ab.cooldownLeft / ab.cooldown);
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => ready && handleTriggerAbility(key)}
+                      title={ab.desc}
+                      style={{
+                        flex: 1,
+                        padding: "5px 4px",
+                        border: `1px solid ${ready ? ab.color : "#1e293b"}`,
+                        borderRadius: 5,
+                        background: ready
+                          ? `rgba(6,6,16,0.88)`
+                          : "rgba(6,6,16,0.72)",
+                        color: ready ? ab.color : "#374151",
+                        fontFamily: mono,
+                        fontSize: 9,
+                        cursor: ready ? "pointer" : "not-allowed",
+                        textAlign: "center",
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: "absolute",
+                          bottom: 0,
+                          left: 0,
+                          height: "2px",
+                          width: `${pct * 100}%`,
+                          background: ab.color,
+                          borderRadius: 2,
+                        }}
+                      />
+                      <div style={{ fontSize: 14 }}>{ab.icon}</div>
+                      <div style={{ fontSize: 8 }}>{ab.name}</div>
+                      <div style={{ fontSize: 7, color: "#475569" }}>
+                        {ab.cooldownLeft > 0
+                          ? `${Math.ceil(ab.cooldownLeft / 60)}s`
+                          : "READY"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Right side — changes based on state */}
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 5,
+                  minWidth: 100,
+                }}
+              >
+                {/* Between waves: Fortify + Send Wave */}
+                {gameState.state === "idle" && (
+                  <>
+                    <button
+                      onClick={handleFortify}
+                      disabled={
+                        gameState.gold < gameState.fortifyCost ||
+                        gameState.fortifyLevel >= gameState.maxFortifyLevel
+                      }
+                      style={{
+                        flex: 1,
+                        padding: "5px 8px",
+                        background: "rgba(6,6,16,0.88)",
+                        border: `1px solid ${gameState.gold >= gameState.fortifyCost && gameState.fortifyLevel < gameState.maxFortifyLevel ? "#fbbf24" : "#1e293b"}`,
+                        borderRadius: 5,
+                        color:
+                          gameState.gold >= gameState.fortifyCost &&
+                          gameState.fortifyLevel < gameState.maxFortifyLevel
+                            ? "#fbbf24"
+                            : "#374151",
+                        fontFamily: mono,
+                        fontSize: 9,
+                        cursor:
+                          gameState.gold >= gameState.fortifyCost &&
+                          gameState.fortifyLevel < gameState.maxFortifyLevel
+                            ? "pointer"
+                            : "not-allowed",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <span>🏰 Fortify</span>
+                      <span style={{ fontWeight: "bold" }}>
+                        {gameState.fortifyLevel >= gameState.maxFortifyLevel
+                          ? "MAX"
+                          : `${gameState.fortifyCost}g`}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={handleStartWave}
+                      style={{
+                        padding: "7px 8px",
+                        background: "rgba(6,6,16,0.88)",
+                        border: "1px solid #4ade80",
+                        borderRadius: 5,
+                        color: "#4ade80",
+                        fontFamily: mono,
+                        fontSize: 10,
+                        fontWeight: "bold",
+                        cursor: "pointer",
+                        textAlign: "center",
+                      }}
+                    >
+                      ▶ WAVE {gameState.wave + 1}
+                      {gameState.bossWaves?.[gameState.wave + 1] ? " 💀" : ""}
+                    </button>
+                  </>
+                )}
+
+                {/* During wave: pause only */}
+                {gameState.state === "wave" && (
+                  <button
+                    onClick={handlePause}
+                    style={{
+                      padding: "7px 8px",
+                      background: "rgba(6,6,16,0.88)",
+                      border: `1px solid ${gameState.paused ? "#4ade80" : "#fbbf24"}`,
+                      borderRadius: 5,
+                      color: gameState.paused ? "#4ade80" : "#fbbf24",
+                      fontFamily: mono,
+                      fontSize: 10,
+                      fontWeight: "bold",
+                      cursor: "pointer",
+                      textAlign: "center",
+                    }}
+                  >
+                    {gameState.paused ? "▶ RESUME" : "⏸ PAUSE"}
+                  </button>
+                )}
+
+                {/* Game over / victory */}
+                {(gameState.state === "gameover" ||
+                  gameState.state === "victory") && (
+                  <button
+                    onClick={() => handleReset(gameState.levelId)}
+                    style={{
+                      padding: "7px 8px",
+                      background: "rgba(6,6,16,0.88)",
+                      border: `1px solid ${gameState.state === "victory" ? "#4ade80" : "#ef4444"}`,
+                      borderRadius: 5,
+                      color:
+                        gameState.state === "victory" ? "#4ade80" : "#ef4444",
+                      fontFamily: mono,
+                      fontSize: 10,
+                      fontWeight: "bold",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ↺ AGAIN
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
+
+      {/* Floating HUD toggle button — only on mobile */}
+      {/* <button
+        onClick={() => setHudVisible((v) => !v)}
+        style={{
+          display: isMobile ? "flex" : "none",
+          position: "fixed",
+          bottom: 20,
+          right: 20,
+          zIndex: 7000,
+          width: 52,
+          height: 52,
+          borderRadius: "50%",
+          background: "#1e293b",
+          border: "2px solid #38bdf8",
+          color: "#38bdf8",
+          fontSize: 22,
+          cursor: "pointer",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: mono,
+          boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
+        }}
+      >
+        {hudVisible ? "✕" : "☰"}
+      </button> */}
 
       {/* HUD */}
       <HUD
@@ -860,6 +1326,11 @@ export default function App() {
         onClearScores={handleClearScores}
         showAchievements={showAchievements}
         onToggleAchievements={() => setShowAchievements((s) => !s)}
+        onRepairTower={handleRepairTower}
+        onRepairAll={handleRepairAll}
+        isMobile={isMobile}
+        hudVisible={isMobile ? hudVisible : true}
+        onCloseHud={() => setHudVisible(false)}
       />
     </div>
   );
@@ -878,6 +1349,7 @@ function RunSummaryModal({ gameState, highScores, onPlayAgain, onLevels }) {
   )[0];
 
   const runAchievements = gameState.runAchievements || [];
+  const modifierNames = [...new Set(gameState.runStats?.modifiersFaced || [])];
 
   const statRow = (label, val, color = "#e2e8f0") => (
     <div
@@ -892,8 +1364,6 @@ function RunSummaryModal({ gameState, highScores, onPlayAgain, onLevels }) {
       <span style={{ color, fontWeight: "bold" }}>{val}</span>
     </div>
   );
-
-  const modifierNames = [...new Set(gameState.runStats?.modifiersFaced || [])];
 
   return (
     <div
@@ -1026,24 +1496,21 @@ function RunSummaryModal({ gameState, highScores, onPlayAgain, onLevels }) {
               MODIFIERS SURVIVED
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              {modifierNames.map((id) => {
-                const { WAVE_MODIFIERS: WM } = { WAVE_MODIFIERS: [] };
-                return (
-                  <span
-                    key={id}
-                    style={{
-                      fontSize: 9,
-                      padding: "2px 7px",
-                      background: "#1e293b",
-                      color: "#94a3b8",
-                      borderRadius: 4,
-                      border: "1px solid #334155",
-                    }}
-                  >
-                    {id.replace(/_/g, " ")}
-                  </span>
-                );
-              })}
+              {modifierNames.map((id) => (
+                <span
+                  key={id}
+                  style={{
+                    fontSize: 9,
+                    padding: "2px 7px",
+                    background: "#1e293b",
+                    color: "#94a3b8",
+                    borderRadius: 4,
+                    border: "1px solid #334155",
+                  }}
+                >
+                  {id.replace(/_/g, " ")}
+                </span>
+              ))}
             </div>
           </div>
         )}

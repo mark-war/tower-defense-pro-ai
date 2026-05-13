@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   TOWER_TYPES,
   TOWER_UPGRADES,
@@ -11,6 +11,7 @@ import {
   ABILITIES,
   SYNERGIES,
   ACHIEVEMENTS,
+  ENEMY_EVOLUTIONS,
 } from "./gameConstants.js";
 import { getGlobalMemory } from "./WaveAI.js";
 
@@ -41,11 +42,24 @@ export function HUD({
   onLoad,
   onDeleteSave,
   onClearScores,
-  showAchievements,
-  onToggleAchievements,
+  onRepairTower,
+  onRepairAll,
+  isMobile = false,
+  hudVisible = true,
+  onCloseHud,
 }) {
   const [confirmLevel, setConfirmLevel] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
+
+  const prevLen = useRef(0);
+  const [showAchievements, setShowAchievements] = useState(false);
+  const [showHighScores, setShowHighScores] = useState(false);
+
+  const currentLen = gameState?.runAchievements?.length || 0;
+  if (currentLen > prevLen.current) {
+    prevLen.current = currentLen;
+    setShowAchievements(true);
+  }
 
   if (!gameState)
     return (
@@ -94,6 +108,13 @@ export function HUD({
     fortifyCost = 150,
     maxFortifyLevel = 20,
     activeModifier = null,
+    incomingModifier = null,
+    lastWaveClearTime = 0,
+    fastestWaveClear = 0,
+    activeEvolutions = {},
+    repairAllCost = 0,
+    damagedTowerCount = 0,
+    activeMapBonus = null,
   } = gameState;
 
   const aiReport = aiSummary?.report;
@@ -160,10 +181,25 @@ export function HUD({
   return (
     <div
       style={{
+        ...(isMobile
+          ? {
+              position: "fixed",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 6000,
+              transform: hudVisible ? "translateX(0)" : "translateX(100%)",
+              transition: "transform 0.25s ease",
+              width: "min(310px, 92vw)",
+              boxShadow: hudVisible ? "-4px 0 24px rgba(0,0,0,0.6)" : "none",
+            }
+          : {
+              position: "relative",
+              width: 310,
+              minWidth: 310,
+            }),
         display: "flex",
         flexDirection: "column",
-        width: 310,
-        minWidth: 310,
         height: "100vh",
         background: "#0a0a14",
         borderLeft: "1px solid #1e293b",
@@ -171,9 +207,34 @@ export function HUD({
         color: "#e2e8f0",
         overflowY: "auto",
         overflowX: "hidden",
-        position: "relative",
       }}
     >
+      {isMobile && (
+        <button
+          onClick={onCloseHud}
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 10,
+            width: "100%",
+            padding: "10px",
+            background: "#0d1117",
+            border: "none",
+            borderBottom: "1px solid #1e293b",
+            color: "#64748b",
+            fontFamily: mono,
+            fontSize: 11,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <span style={{ color: "#38bdf8" }}>◀ CLOSE HUD</span>
+          <span>✕</span>
+        </button>
+      )}
+
       {/* ── ENEMY INSPECT PANEL ───────────────────────────────────────────── */}
       {inspectedEnemy && (
         <EnemyInspectPanel
@@ -648,6 +709,32 @@ export function HUD({
             </div>
           </div>
 
+          {/* Active map bonus */}
+          {activeMapBonus && (
+            <div
+              style={{
+                padding: "5px 11px",
+                borderBottom: "1px solid #1e293b",
+                background: "#0a120f",
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+              }}
+            >
+              <span style={{ fontSize: 14 }}>🗺</span>
+              <div>
+                <div style={{ fontSize: 8, color: "#475569" }}>
+                  MAP BONUS — {gameState?.mapName}
+                </div>
+                <div
+                  style={{ fontSize: 10, color: "#4ade80", fontWeight: "bold" }}
+                >
+                  {activeMapBonus.label}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Synergy badges */}
           {activeSynergies.length > 0 && (
             <div
@@ -784,6 +871,54 @@ export function HUD({
                       <div style={{ fontSize: 9, color: "#4b5563" }}>
                         {def.desc}
                       </div>
+                      <div style={{ display: "flex", gap: 3, marginTop: 2 }}>
+                        <span
+                          style={{
+                            fontSize: 7,
+                            padding: "1px 4px",
+                            borderRadius: 3,
+                            background:
+                              def.damageType === "magical"
+                                ? "#1a0a2e"
+                                : def.damageType === "hybrid"
+                                  ? "#0a1a1a"
+                                  : "#0a1a0a",
+                            color:
+                              def.damageType === "magical"
+                                ? "#c4b5fd"
+                                : def.damageType === "hybrid"
+                                  ? "#a5f3fc"
+                                  : "#86efac",
+                            border: `1px solid ${
+                              def.damageType === "magical"
+                                ? "#4c1d95"
+                                : def.damageType === "hybrid"
+                                  ? "#164e63"
+                                  : "#14532d"
+                            }`,
+                          }}
+                        >
+                          {def.damageType === "magical"
+                            ? "MAG"
+                            : def.damageType === "hybrid"
+                              ? "HYB"
+                              : "PHY"}
+                        </span>
+                        {def.homing && (
+                          <span
+                            style={{
+                              fontSize: 7,
+                              padding: "1px 4px",
+                              borderRadius: 3,
+                              background: "#1a0a0a",
+                              color: "#fca5a5",
+                              border: "1px solid #7f1d1d",
+                            }}
+                          >
+                            HOMING
+                          </span>
+                        )}
+                      </div>
                       {upgDef && (
                         <div
                           style={{
@@ -884,6 +1019,72 @@ export function HUD({
                         ✓ {TOWER_TYPES[nextBossDef.weakness]?.name}
                       </span>
                     )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Incoming modifier warning */}
+          {incomingModifier && state === "idle" && (
+            <div
+              style={{
+                padding: "8px 11px",
+                borderBottom: "1px solid #1e293b",
+                background:
+                  incomingModifier.type === "buff"
+                    ? "#061a06"
+                    : incomingModifier.type === "debuff"
+                      ? "#1a0606"
+                      : "#0a0a1a",
+                border: `1px solid ${
+                  incomingModifier.type === "buff"
+                    ? "#166534"
+                    : incomingModifier.type === "debuff"
+                      ? "#7f1d1d"
+                      : "#3730a3"
+                }`,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 9,
+                  color: "#fbbf24",
+                  letterSpacing: "0.1em",
+                  marginBottom: 4,
+                }}
+              >
+                ⚡ PREPARE — NEXT WAVE IS MODIFIER WAVE
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 22 }}>{incomingModifier.icon}</span>
+                <div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "bold",
+                      color:
+                        incomingModifier.type === "buff"
+                          ? "#4ade80"
+                          : incomingModifier.type === "debuff"
+                            ? "#ef4444"
+                            : "#818cf8",
+                    }}
+                  >
+                    {incomingModifier.name}
+                    <span
+                      style={{
+                        fontSize: 8,
+                        marginLeft: 5,
+                        color: "#475569",
+                        fontWeight: "normal",
+                      }}
+                    >
+                      {incomingModifier.type.toUpperCase()}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 9, color: "#6b7280" }}>
+                    {incomingModifier.desc}
                   </div>
                 </div>
               </div>
@@ -1085,6 +1286,61 @@ export function HUD({
       {/* ════ TAB: UPGRADE ══════════════════════════════════════════════════ */}
       {activeTab === "upgrade" && (
         <div style={{ flex: 1, overflowY: "auto", padding: "10px 11px" }}>
+          {/* Repair All banner */}
+          {damagedTowerCount > 0 && (
+            <div
+              style={{
+                marginBottom: 8,
+                padding: "7px 10px",
+                background: "#1a0808",
+                border: "1px solid #ef4444",
+                borderRadius: 5,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+              }}
+            >
+              <div>
+                <div
+                  style={{ fontSize: 10, color: "#fca5a5", fontWeight: "bold" }}
+                >
+                  ⚠ {damagedTowerCount} tower{damagedTowerCount > 1 ? "s" : ""}{" "}
+                  damaged
+                </div>
+                <div style={{ fontSize: 8, color: "#6b7280" }}>
+                  Auto-heals 20% between waves
+                </div>
+              </div>
+              <button
+                onClick={onRepairAll}
+                disabled={state !== "idle" || gold < repairAllCost}
+                style={{
+                  padding: "5px 10px",
+                  background:
+                    state === "idle" && gold >= repairAllCost
+                      ? "#1a2a0a"
+                      : "#111827",
+                  border: `1px solid ${state === "idle" && gold >= repairAllCost ? "#4ade80" : "#374151"}`,
+                  borderRadius: 4,
+                  color:
+                    state === "idle" && gold >= repairAllCost
+                      ? "#4ade80"
+                      : "#374151",
+                  fontFamily: mono,
+                  fontSize: 10,
+                  cursor:
+                    state === "idle" && gold >= repairAllCost
+                      ? "pointer"
+                      : "not-allowed",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                🔧 All — {repairAllCost}g
+              </button>
+            </div>
+          )}
+
           {/* Upgrade-ready towers */}
           {towers.filter((t) => t.upgradeReady).length > 0 && (
             <div
@@ -1131,6 +1387,7 @@ export function HUD({
             <UpgradePanel
               tower={selectedTowerObj}
               onUpgrade={onUpgrade}
+              onRepairTower={onRepairTower}
               gold={gold}
               currentWave={wave}
             />
@@ -1324,6 +1581,50 @@ export function HUD({
                   <div style={{ fontSize: 9, color: "#6b7280" }}>
                     {activeModifier.desc}
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Wave stats */}
+          {lastWaveClearTime > 0 && (
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                marginBottom: 10,
+              }}
+            >
+              <div
+                style={{
+                  flex: 1,
+                  background: "#0d1117",
+                  borderRadius: 5,
+                  padding: "5px 8px",
+                  border: "1px solid #1e293b",
+                }}
+              >
+                <div style={{ fontSize: 8, color: "#475569" }}>LAST WAVE</div>
+                <div
+                  style={{ fontSize: 13, fontWeight: "bold", color: "#38bdf8" }}
+                >
+                  {lastWaveClearTime}s
+                </div>
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  background: "#0d1117",
+                  borderRadius: 5,
+                  padding: "5px 8px",
+                  border: "1px solid #1e293b",
+                }}
+              >
+                <div style={{ fontSize: 8, color: "#475569" }}>FASTEST</div>
+                <div
+                  style={{ fontSize: 13, fontWeight: "bold", color: "#fbbf24" }}
+                >
+                  {fastestWaveClear > 0 ? `${fastestWaveClear}s` : "—"}
                 </div>
               </div>
             </div>
@@ -1738,6 +2039,51 @@ export function HUD({
               })}
             </Sect>
           )}
+          {/* Active enemy evolutions */}
+          {Object.keys(activeEvolutions || {}).length > 0 && (
+            <Sect label="⚠ ENEMY ADAPTATIONS">
+              {Object.entries(activeEvolutions).map(([enemyType, evoIds]) => {
+                const eDef = ENEMY_TYPES[enemyType];
+                return evoIds.map((evoId) => {
+                  const evo = ENEMY_EVOLUTIONS?.[evoId];
+                  if (!evo) return null;
+                  return (
+                    <div
+                      key={evoId}
+                      style={{
+                        display: "flex",
+                        gap: 7,
+                        marginBottom: 6,
+                        padding: "5px 7px",
+                        background: "#1a0808",
+                        borderRadius: 5,
+                        border: "1px solid #7f1d1d",
+                      }}
+                    >
+                      <span style={{ fontSize: 16 }}>
+                        {eDef?.icon}
+                        {evo.icon}
+                      </span>
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            fontWeight: "bold",
+                            color: "#fca5a5",
+                          }}
+                        >
+                          {eDef?.name} — {evo.name}
+                        </div>
+                        <div style={{ fontSize: 9, color: "#6b7280" }}>
+                          {evo.desc}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                });
+              })}
+            </Sect>
+          )}
           {gm.gamesPlayed >= 1 && (
             <Sect label={`CROSS-GAME MEMORY (${gm.gamesPlayed} runs)`}>
               {Object.entries(gm.weaknessSuccessRate).map(([w, rate]) => {
@@ -2094,191 +2440,245 @@ export function HUD({
           marginTop: 10,
           borderTop: "1px solid #1e293b",
           paddingTop: 8,
-          marginBottom: showAchievements ? 10 : 0,
+          marginBottom: 10,
         }}
       >
-        <button
-          onClick={onToggleAchievements}
-          style={{
-            width: "100%",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            padding: "0 0 8px 0",
-            fontFamily: mono,
-          }}
-        >
-          <div
-            style={{ fontSize: 9, color: "#818cf8", letterSpacing: "0.1em" }}
-          >
-            🏅 ACHIEVEMENTS ({Object.keys(unlockedAchievements).length}/
-            {Object.keys(ACHIEVEMENTS).length})
-          </div>
-          <span style={{ fontSize: 9, color: "#475569" }}>
-            {showAchievements ? "▲ hide" : "▼ show"}
-          </span>
-        </button>
-
-        {showAchievements && (
-          <div
-            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}
-          >
-            {Object.values(ACHIEVEMENTS).map((ach) => {
-              const unlocked = !!unlockedAchievements[ach.id];
-              return (
-                <div
-                  key={ach.id}
-                  style={{
-                    padding: "5px 7px",
-                    borderRadius: 4,
-                    background: unlocked ? "#1a1a0a" : "#0d1117",
-                    border: `1px solid ${unlocked ? "#fbbf24" : "#1e293b"}`,
-                    opacity: unlocked ? 1 : 0.45,
-                  }}
-                >
-                  <div style={{ fontSize: 12 }}>{ach.icon}</div>
-                  <div
-                    style={{
-                      fontSize: 9,
-                      color: unlocked ? "#fde68a" : "#6b7280",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {ach.name}
-                  </div>
-                  <div
-                    style={{ fontSize: 8, color: "#475569", lineHeight: 1.4 }}
-                  >
-                    {ach.secret && !unlocked ? "???" : ach.desc}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* High Scores */}
-      <div
-        style={{
-          marginTop: 10,
-          borderTop: "1px solid #1e293b",
-          paddingTop: 8,
-        }}
-      >
+        {/* Header — always visible, always clickable */}
         <div
+          onClick={() => setShowAchievements((v) => !v)}
           style={{
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            marginBottom: 6,
+            marginBottom: showAchievements ? 8 : 0,
+            cursor: "pointer",
+            userSelect: "none",
+            padding: "2px 0",
           }}
         >
           <div
             style={{
               fontSize: 9,
-              color: "#facc15",
+              color:
+                Object.keys(unlockedAchievements).length > 0
+                  ? "#fbbf24"
+                  : "#374151",
               letterSpacing: "0.1em",
             }}
           >
-            🏆 HIGH SCORES
+            🏅 ACHIEVEMENTS ({Object.keys(unlockedAchievements).length}/
+            {Object.keys(ACHIEVEMENTS).length})
           </div>
-          {highScores.length > 0 && (
-            <button
-              onClick={onClearScores}
-              style={{
-                fontSize: 8,
-                fontFamily: mono,
-                padding: "1px 5px",
-                background: "transparent",
-                border: "1px solid #374151",
-                borderRadius: 3,
-                color: "#475569",
-                cursor: "pointer",
-              }}
-            >
-              clear
-            </button>
-          )}
+          <div style={{ fontSize: 9, color: "#475569" }}>
+            {showAchievements ? "▲ hide" : "▼ show"}
+          </div>
         </div>
-        {highScores.length === 0 ? (
-          <div style={{ fontSize: 9, color: "#374151" }}>
-            No scores yet. Play a game!
-          </div>
-        ) : (
-          highScores.map((s, i) => (
-            <div
-              key={i}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-                marginBottom: 4,
-                padding: "3px 6px",
-                background: i === 0 ? "#1a1a0a" : "transparent",
-                borderRadius: 4,
-                border: i === 0 ? "1px solid #facc15" : "1px solid transparent",
-              }}
-            >
+
+        {/* Body — only rendered when open */}
+        {showAchievements && (
+          <>
+            {Object.keys(unlockedAchievements).length === 0 ? (
               <div
                 style={{
-                  fontSize: 10,
-                  fontWeight: "bold",
-                  color:
-                    i === 0
-                      ? "#facc15"
-                      : i === 1
-                        ? "#94a3b8"
-                        : i === 2
-                          ? "#b45309"
-                          : "#374151",
-                  minWidth: 14,
+                  fontSize: 9,
+                  color: "#374151",
+                  fontStyle: "italic",
+                  padding: "4px 0",
                 }}
               >
-                #{i + 1}
+                No achievements yet. Play to unlock them.
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 10, color: "#e2e8f0" }}>
-                  {s.score.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 8, color: "#93c5fd" }}>
-                  {s.playerName || "Unknown Commander"}
-                </div>
-                <div style={{ fontSize: 8, color: "#6b7280" }}>
-                  {s.levelName} · W{s.wave} ·{" "}
-                  {s.won ? (
-                    <span style={{ color: "#4ade80" }}>WIN</span>
-                  ) : (
-                    <span style={{ color: "#ef4444" }}>LOSS</span>
-                  )}{" "}
-                  · {s.date}
-                </div>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 4,
+                }}
+              >
+                {Object.values(ACHIEVEMENTS).map((ach) => {
+                  const unlocked = !!unlockedAchievements[ach.id];
+                  if (!unlocked && ach.secret) return null;
+                  return (
+                    <div
+                      key={ach.id}
+                      style={{
+                        padding: "5px 7px",
+                        borderRadius: 4,
+                        background: unlocked ? "#1a1a0a" : "#0d1117",
+                        border: `1px solid ${unlocked ? "#fbbf24" : "#1e293b"}`,
+                        opacity: unlocked ? 1 : 0.4,
+                      }}
+                    >
+                      <div style={{ fontSize: 12 }}>{ach.icon}</div>
+                      <div
+                        style={{
+                          fontSize: 9,
+                          color: unlocked ? "#fde68a" : "#6b7280",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        {ach.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 8,
+                          color: "#475569",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {ach.secret && !unlocked ? "???" : ach.desc}
+                        {unlocked &&
+                          unlockedAchievements[ach.id]?.unlockedAt && (
+                            <span
+                              style={{
+                                display: "block",
+                                color: "#374151",
+                                marginTop: 1,
+                              }}
+                            >
+                              {new Date(
+                                unlockedAchievements[ach.id].unlockedAt,
+                              ).toLocaleDateString()}
+                            </span>
+                          )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-          ))
+            )}
+          </>
         )}
-        {hasSave && (
-          <div style={{ marginTop: 8 }}>
-            <button
-              onClick={onDeleteSave}
-              style={{
-                width: "100%",
-                fontSize: 9,
-                fontFamily: mono,
-                padding: "3px",
-                background: "transparent",
-                border: "1px solid #3a1a1a",
-                borderRadius: 3,
-                color: "#6b7280",
-                cursor: "pointer",
-              }}
-            >
-              🗑 Delete current save
-            </button>
+      </div>
+
+      {/* High Scores */}
+      <div
+        style={{ marginTop: 10, borderTop: "1px solid #1e293b", paddingTop: 8 }}
+      >
+        <div
+          onClick={() => setShowHighScores((v) => !v)}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: showHighScores ? 6 : 0,
+            cursor: "pointer",
+            userSelect: "none",
+            padding: "2px 0",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 9,
+              color: highScores.length > 0 ? "#facc15" : "#374151",
+              letterSpacing: "0.1em",
+            }}
+          >
+            🏆 HIGH SCORES ({highScores.length})
           </div>
+          <div style={{ fontSize: 9, color: "#475569" }}>
+            {showHighScores ? "▲ hide" : "▼ show"}
+          </div>
+        </div>
+
+        {showHighScores && (
+          <>
+            {highScores.length === 0 ? (
+              <div style={{ fontSize: 9, color: "#374151" }}>
+                No scores yet. Play a game!
+              </div>
+            ) : (
+              highScores.map((s, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    marginBottom: 4,
+                    padding: "3px 6px",
+                    background: i === 0 ? "#1a1a0a" : "transparent",
+                    borderRadius: 4,
+                    border:
+                      i === 0 ? "1px solid #facc15" : "1px solid transparent",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: "bold",
+                      color:
+                        i === 0
+                          ? "#facc15"
+                          : i === 1
+                            ? "#94a3b8"
+                            : i === 2
+                              ? "#b45309"
+                              : "#374151",
+                      minWidth: 14,
+                    }}
+                  >
+                    #{i + 1}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: "#e2e8f0" }}>
+                      {s.score.toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: 8, color: "#93c5fd" }}>
+                      {s.playerName || "Unknown Commander"}
+                    </div>
+                    <div style={{ fontSize: 8, color: "#6b7280" }}>
+                      {s.levelName} · W{s.wave} ·{" "}
+                      {s.won ? (
+                        <span style={{ color: "#4ade80" }}>WIN</span>
+                      ) : (
+                        <span style={{ color: "#ef4444" }}>LOSS</span>
+                      )}{" "}
+                      · {s.date}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+            {hasSave && (
+              <div style={{ marginTop: 8 }}>
+                <button
+                  onClick={onDeleteSave}
+                  style={{
+                    width: "100%",
+                    fontSize: 9,
+                    fontFamily: mono,
+                    padding: "3px",
+                    background: "transparent",
+                    border: "1px solid #3a1a1a",
+                    borderRadius: 3,
+                    color: "#6b7280",
+                    cursor: "pointer",
+                  }}
+                >
+                  🗑 Delete current save
+                </button>
+              </div>
+            )}
+            {highScores.length > 0 && (
+              <button
+                onClick={onClearScores}
+                style={{
+                  fontSize: 8,
+                  fontFamily: mono,
+                  padding: "1px 5px",
+                  background: "transparent",
+                  border: "1px solid #374151",
+                  borderRadius: 3,
+                  color: "#475569",
+                  cursor: "pointer",
+                }}
+              >
+                clear
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -2359,7 +2759,7 @@ function SkillBtn({
 }
 
 // Upgrade panel for a selected tower, showing passive tiers and skill choices.
-function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
+function UpgradePanel({ tower, onUpgrade, onRepairTower, gold, currentWave }) {
   const def = TOWER_TYPES[tower.type];
   const upgDef = TOWER_UPGRADES[tower.type];
 
@@ -2406,6 +2806,81 @@ function UpgradePanel({ tower, onUpgrade, gold, currentWave }) {
           </div>
         </div>
       </div>
+
+      {/* Repair button — only shown when damaged */}
+      {tower.hp < tower.maxHp && (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: "8px 10px",
+            background: tower.disabled ? "#2a0a0a" : "#1a1400",
+            border: `1px solid ${tower.disabled ? "#ef4444" : "#f97316"}`,
+            borderRadius: 5,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 5,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                color: tower.disabled ? "#ef4444" : "#f97316",
+              }}
+            >
+              {tower.disabled ? "⚠ DISABLED" : "🔧 DAMAGED"}
+            </div>
+            <div style={{ fontSize: 9, color: "#6b7280" }}>
+              {Math.ceil(tower.hp)}/{tower.maxHp} HP
+            </div>
+          </div>
+          <div
+            style={{
+              height: 4,
+              background: "#1e293b",
+              borderRadius: 2,
+              marginBottom: 7,
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${(tower.hp / tower.maxHp) * 100}%`,
+                background:
+                  tower.hp / tower.maxHp > 0.6
+                    ? "#4ade80"
+                    : tower.hp / tower.maxHp > 0.3
+                      ? "#facc15"
+                      : "#ef4444",
+                borderRadius: 2,
+              }}
+            />
+          </div>
+          <button
+            onClick={() => onRepairTower(tower.col, tower.row)}
+            disabled={gold < (tower.repairCost || 0)}
+            style={{
+              width: "100%",
+              padding: "5px",
+              background:
+                gold >= (tower.repairCost || 0) ? "#1a2a0a" : "#111827",
+              border: `1px solid ${gold >= (tower.repairCost || 0) ? "#4ade80" : "#374151"}`,
+              borderRadius: 4,
+              color: gold >= (tower.repairCost || 0) ? "#4ade80" : "#374151",
+              fontFamily: mono,
+              fontSize: 10,
+              cursor:
+                gold >= (tower.repairCost || 0) ? "pointer" : "not-allowed",
+            }}
+          >
+            🔧 Repair — {tower.repairCost || 0}g
+          </button>
+        </div>
+      )}
 
       <div style={{ marginBottom: 10 }}>
         <div
@@ -2930,6 +3405,7 @@ function SB({ label, val, c }) {
     </div>
   );
 }
+
 function Sect({ label, children }) {
   return (
     <div style={{ marginBottom: 10 }}>
@@ -2947,6 +3423,7 @@ function Sect({ label, children }) {
     </div>
   );
 }
+
 function Tag({ c, tc, children }) {
   return (
     <span

@@ -47,6 +47,7 @@ export function HUD({
   isMobile = false,
   hudVisible = true,
   onCloseHud,
+  hudRef,
 }) {
   const [confirmLevel, setConfirmLevel] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -180,6 +181,7 @@ export function HUD({
 
   return (
     <div
+      ref={hudRef}
       style={{
         ...(isMobile
           ? {

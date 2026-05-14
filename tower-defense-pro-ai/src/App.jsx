@@ -145,6 +145,8 @@ export default function App() {
   const achievementQueueRef = useRef([]);
   const toastTimerRef = useRef(null);
 
+  const hudRef = useRef(null);
+
   const [showAchievements, setShowAchievements] = useState(false);
 
   // ── HUD visibility and mobile state ──────────────────────────────────────────────────────────
@@ -179,9 +181,11 @@ export default function App() {
     if (!gameState?.state) return;
     if (gameState.state === "idle" && gameState.wave > 0) {
       setTimeout(() => setShowAchievements(true), 0);
+      setTimeout(() => setHudVisible(true), 0);
     }
     if (gameState.state === "wave") {
       setTimeout(() => setShowAchievements(false), 0);
+      // don't hide HUD on wave start — player may still be looking at upgrades
     }
   }, [gameState?.state, gameState?.wave]);
 
@@ -223,6 +227,22 @@ export default function App() {
   useEffect(() => {
     return () => clearTimeout(bottomBarTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!isMobile) return; // desktop HUD is always visible, no need
+
+    const handlePointerDown = (e) => {
+      if (!hudVisible) return;
+      // If click is outside the HUD drawer, close it
+      if (hudRef.current && !hudRef.current.contains(e.target)) {
+        setHudVisible(false);
+      }
+    };
+
+    // Use pointerdown so it catches both mouse and touch
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [isMobile, hudVisible]);
 
   // ── Achievement toast queue ──────────────────────────────────────────────────
   const isShowingToastRef = useRef(false);
@@ -1165,43 +1185,56 @@ export default function App() {
                 {/* Between waves: Fortify + Send Wave */}
                 {gameState.state === "idle" && (
                   <>
-                    <button
-                      onClick={handleFortify}
-                      disabled={
-                        gameState.gold < gameState.fortifyCost ||
-                        gameState.fortifyLevel >= gameState.maxFortifyLevel
-                      }
-                      style={{
-                        flex: 1,
-                        padding: "5px 8px",
-                        background: "rgba(6,6,16,0.88)",
-                        border: `1px solid ${gameState.gold >= gameState.fortifyCost && gameState.fortifyLevel < gameState.maxFortifyLevel ? "#fbbf24" : "#1e293b"}`,
-                        borderRadius: 5,
-                        color:
-                          gameState.gold >= gameState.fortifyCost &&
-                          gameState.fortifyLevel < gameState.maxFortifyLevel
-                            ? "#fbbf24"
-                            : "#374151",
-                        fontFamily: mono,
-                        fontSize: 9,
-                        cursor:
-                          gameState.gold >= gameState.fortifyCost &&
-                          gameState.fortifyLevel < gameState.maxFortifyLevel
-                            ? "pointer"
-                            : "not-allowed",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <span>🏰 Fortify</span>
-                      <span style={{ fontWeight: "bold" }}>
+                    <div style={{ display: "flex", gap: 5 }}>
+                      <button
+                        onClick={handleFortify}
+                        disabled={
+                          gameState.gold < gameState.fortifyCost ||
+                          gameState.fortifyLevel >= gameState.maxFortifyLevel
+                        }
+                        style={{
+                          flex: 1,
+                          padding: "5px 8px",
+                          background: "rgba(6,6,16,0.88)",
+                          border: `1px solid ${gameState.gold >= gameState.fortifyCost && gameState.fortifyLevel < gameState.maxFortifyLevel ? "#fbbf24" : "#1e293b"}`,
+                          borderRadius: 5,
+                          color:
+                            gameState.gold >= gameState.fortifyCost &&
+                            gameState.fortifyLevel < gameState.maxFortifyLevel
+                              ? "#fbbf24"
+                              : "#374151",
+                          fontFamily: mono,
+                          fontSize: 9,
+                          cursor:
+                            gameState.gold >= gameState.fortifyCost &&
+                            gameState.fortifyLevel < gameState.maxFortifyLevel
+                              ? "pointer"
+                              : "not-allowed",
+                        }}
+                      >
+                        🏰{" "}
                         {gameState.fortifyLevel >= gameState.maxFortifyLevel
                           ? "MAX"
                           : `${gameState.fortifyCost}g`}
-                      </span>
-                    </button>
+                      </button>
+
+                      <button
+                        onClick={handleSave}
+                        style={{
+                          flex: 1,
+                          padding: "5px 8px",
+                          background: "rgba(6,6,16,0.88)",
+                          border: "1px solid #38bdf8",
+                          borderRadius: 5,
+                          color: "#38bdf8",
+                          fontFamily: mono,
+                          fontSize: 9,
+                          cursor: "pointer",
+                        }}
+                      >
+                        💾 Save
+                      </button>
+                    </div>
 
                     <button
                       onClick={handleStartWave}
@@ -1331,6 +1364,7 @@ export default function App() {
         isMobile={isMobile}
         hudVisible={isMobile ? hudVisible : true}
         onCloseHud={() => setHudVisible(false)}
+        hudRef={hudRef}
       />
     </div>
   );

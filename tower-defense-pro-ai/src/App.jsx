@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GameEngine } from "./GameEngine.js";
 import { HUD } from "./HUD.jsx";
-import { CELL_SIZE, ACHIEVEMENTS, MAPS } from "./gameConstants.js";
+import {
+  CELL_SIZE,
+  ACHIEVEMENTS,
+  MAPS,
+  TOWER_TYPES,
+  TOWER_UPGRADES,
+  ENEMY_TYPES,
+} from "./gameConstants.js";
 import MapSelectScreen from "./MapSelectScreen.jsx";
 
 const LS_SAVE = "towerDefense_save";
@@ -678,7 +685,7 @@ export default function App() {
 
       // Then swap the map definition in
       if (engineRef.current) {
-        engineRef.current.startEndlessWithMap(mapDef);
+        engineRef.current.startEndlessWithMap(mapKey, mapDef);
       }
     },
     [_doReset],
@@ -714,6 +721,10 @@ export default function App() {
 
   const handleFortify = useCallback(() => {
     engineRef.current?.fortify();
+  }, []);
+
+  const handleAutoRepair = useCallback(() => {
+    engineRef.current?.toggleAutoRepair();
   }, []);
 
   const getCursor = () => {
@@ -1000,6 +1011,37 @@ export default function App() {
           cursor: getCursor(),
         }}
       >
+        {/* Canvas inspect overlays — enemy + tower, shown over canvas on mobile */}
+        {isMobile && gameState && (
+          <CanvasInspectOverlay
+            inspectedEnemy={inspectedEnemy}
+            onClearEnemy={() => setInspectedEnemy(null)}
+            selectedTowerObj={
+              gameState.selectedTowerCell
+                ? gameState.towers?.find(
+                    (t) =>
+                      t.col === gameState.selectedTowerCell.col &&
+                      t.row === gameState.selectedTowerCell.row,
+                  )
+                : null
+            }
+            gameState={gameState}
+            onUpgrade={(col, row, tier, path) => {
+              engineRef.current?.upgradeTower(col, row, tier, path);
+            }}
+            onRepairTower={(col, row) =>
+              engineRef.current?.repairTower(col, row)
+            }
+            onClearTower={() => {
+              engineRef.current?.selectTowerCell(-1, -1);
+              setGameState((s) => ({ ...s, selectedTowerCell: null }));
+            }}
+            onSetTab={(tab) => {
+              setActiveTab(tab);
+              setHudVisible(true); // ← slides HUD drawer open
+            }}
+          />
+        )}
         <canvas
           ref={canvasRef}
           onClick={handleClick}
@@ -1084,6 +1126,74 @@ export default function App() {
                   </div>
                 </div>
               ))}
+
+              {gameState.damagedTowerCount > 0 && (
+                <div
+                  style={{
+                    background: "rgba(239,68,68,0.15)",
+                    border: "1px solid #7f1d1d",
+                    borderRadius: 5,
+                    padding: "4px 6px",
+                    textAlign: "center",
+                    fontFamily: mono,
+                    minWidth: 44,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 7,
+                      color: "#ef4444",
+                      letterSpacing: "0.08em",
+                    }}
+                  >
+                    DMG
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: "bold",
+                      color: "#ef4444",
+                    }}
+                  >
+                    {gameState.damagedTowerCount} 🔧
+                  </div>
+                </div>
+              )}
+
+              {/* Auto-repair active indicator */}
+              {gameState.autoRepair && (
+                <div
+                  style={{
+                    background: "rgba(74,222,128,0.12)",
+                    border: "1px solid #166534",
+                    borderRadius: 5,
+                    padding: "4px 6px",
+                    textAlign: "center",
+                    fontFamily: mono,
+                    minWidth: 44,
+                    pointerEvents: "none",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 7,
+                      color: "#4ade80",
+                      letterSpacing: "0.08em",
+                    }}
+                  >
+                    AUTO
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: "bold",
+                      color: "#4ade80",
+                    }}
+                  >
+                    🔧
+                  </div>
+                </div>
+              )}
 
               {/* HUD toggle — top right */}
               <button
@@ -1236,6 +1346,44 @@ export default function App() {
                       </button>
                     </div>
 
+                    {/* Repair All — only show when towers are damaged */}
+                    {gameState.damagedTowerCount > 0 && (
+                      <button
+                        onClick={handleRepairAll}
+                        disabled={gameState.gold < gameState.repairAllCost}
+                        style={{
+                          padding: "4px 8px",
+                          background: "rgba(6,6,16,0.88)",
+                          border: `1px solid ${
+                            gameState.gold >= gameState.repairAllCost
+                              ? "#4ade80"
+                              : "#1e293b"
+                          }`,
+                          borderRadius: 5,
+                          color:
+                            gameState.gold >= gameState.repairAllCost
+                              ? "#4ade80"
+                              : "#374151",
+                          fontFamily: mono,
+                          fontSize: 9,
+                          cursor:
+                            gameState.gold >= gameState.repairAllCost
+                              ? "pointer"
+                              : "not-allowed",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 6,
+                        }}
+                      >
+                        <span>
+                          🔧 Repair All ({gameState.damagedTowerCount})
+                        </span>
+                        <span style={{ fontWeight: "bold" }}>
+                          {gameState.repairAllCost}g
+                        </span>
+                      </button>
+                    )}
+
                     <button
                       onClick={handleStartWave}
                       style={{
@@ -1259,23 +1407,52 @@ export default function App() {
 
                 {/* During wave: pause only */}
                 {gameState.state === "wave" && (
-                  <button
-                    onClick={handlePause}
-                    style={{
-                      padding: "7px 8px",
-                      background: "rgba(6,6,16,0.88)",
-                      border: `1px solid ${gameState.paused ? "#4ade80" : "#fbbf24"}`,
-                      borderRadius: 5,
-                      color: gameState.paused ? "#4ade80" : "#fbbf24",
-                      fontFamily: mono,
-                      fontSize: 10,
-                      fontWeight: "bold",
-                      cursor: "pointer",
-                      textAlign: "center",
-                    }}
-                  >
-                    {gameState.paused ? "▶ RESUME" : "⏸ PAUSE"}
-                  </button>
+                  <>
+                    {/* Auto-repair toggle — shows during wave */}
+                    <button
+                      onClick={handleAutoRepair}
+                      style={{
+                        padding: "5px 8px",
+                        background: gameState.autoRepair
+                          ? "rgba(74,222,128,0.15)"
+                          : "rgba(6,6,16,0.88)",
+                        border: `1px solid ${gameState.autoRepair ? "#4ade80" : "#334155"}`,
+                        borderRadius: 5,
+                        color: gameState.autoRepair ? "#4ade80" : "#475569",
+                        fontFamily: mono,
+                        fontSize: 9,
+                        cursor: "pointer",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 1,
+                      }}
+                    >
+                      <span>🔧 AUTO</span>
+                      <span style={{ fontSize: 7, color: "#475569" }}>
+                        {gameState.autoRepair ? "ON" : "OFF"}
+                      </span>
+                    </button>
+
+                    {/* PAUSE/RESUME — shows during wave */}
+                    <button
+                      onClick={handlePause}
+                      style={{
+                        padding: "7px 8px",
+                        background: "rgba(6,6,16,0.88)",
+                        border: `1px solid ${gameState.paused ? "#4ade80" : "#fbbf24"}`,
+                        borderRadius: 5,
+                        color: gameState.paused ? "#4ade80" : "#fbbf24",
+                        fontFamily: mono,
+                        fontSize: 10,
+                        fontWeight: "bold",
+                        cursor: "pointer",
+                        textAlign: "center",
+                      }}
+                    >
+                      {gameState.paused ? "▶ RESUME" : "⏸ PAUSE"}
+                    </button>
+                  </>
                 )}
 
                 {/* Game over / victory */}
@@ -1304,32 +1481,6 @@ export default function App() {
           </>
         )}
       </div>
-
-      {/* Floating HUD toggle button — only on mobile */}
-      {/* <button
-        onClick={() => setHudVisible((v) => !v)}
-        style={{
-          display: isMobile ? "flex" : "none",
-          position: "fixed",
-          bottom: 20,
-          right: 20,
-          zIndex: 7000,
-          width: 52,
-          height: 52,
-          borderRadius: "50%",
-          background: "#1e293b",
-          border: "2px solid #38bdf8",
-          color: "#38bdf8",
-          fontSize: 22,
-          cursor: "pointer",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: mono,
-          boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
-        }}
-      >
-        {hudVisible ? "✕" : "☰"}
-      </button> */}
 
       {/* HUD */}
       <HUD
@@ -1366,6 +1517,1003 @@ export default function App() {
         onCloseHud={() => setHudVisible(false)}
         hudRef={hudRef}
       />
+    </div>
+  );
+}
+
+// ─── Canvas Inspect Overlay ────────────────────────────────────────────────────────
+function CanvasInspectOverlay({
+  inspectedEnemy,
+  onClearEnemy,
+  selectedTowerObj,
+  gameState,
+  onUpgrade,
+  onRepairTower,
+  onClearTower,
+  onSetTab,
+}) {
+  if (!inspectedEnemy && !selectedTowerObj) return null;
+  const mono = "'Courier New', monospace";
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={() => {
+          onClearEnemy?.();
+          onClearTower?.();
+        }}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 490,
+          background: "rgba(0,0,0,0.45)",
+        }}
+      />
+      {/* Sheet */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          zIndex: 500,
+          background: "#0f172a",
+          borderTop: "2px solid #1e293b",
+          borderRadius: "16px 16px 0 0",
+          maxHeight: "70vh",
+          overflowY: "auto",
+          fontFamily: mono,
+          boxShadow: "0 -8px 40px rgba(0,0,0,0.8)",
+          animation: "slideUp 0.22s ease",
+        }}
+      >
+        {/* Drag handle */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            padding: "10px 0 4px",
+          }}
+        >
+          <div
+            style={{
+              width: 36,
+              height: 4,
+              borderRadius: 2,
+              background: "#334155",
+            }}
+          />
+        </div>
+
+        <div style={{ padding: "0 16px 24px" }}>
+          {inspectedEnemy && (
+            <CanvasEnemyCard enemy={inspectedEnemy} onClose={onClearEnemy} />
+          )}
+          {selectedTowerObj && (
+            <CanvasTowerCard
+              tower={selectedTowerObj}
+              gold={gameState.gold}
+              wave={gameState.wave}
+              onUpgrade={onUpgrade}
+              onRepairTower={onRepairTower}
+              onClose={onClearTower}
+              onFullUpgrade={() => {
+                onSetTab("upgrade");
+              }}
+            />
+          )}
+        </div>
+      </div>
+      <style>{`@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
+    </>
+  );
+}
+
+function CanvasEnemyCard({ enemy, onClose }) {
+  const mono = "'Courier New', monospace";
+  const [showExtra, setShowExtra] = useState(false);
+  const hpPct = Math.max(0, enemy.hp / enemy.maxHp);
+  const def = ENEMY_TYPES[enemy.type];
+
+  return (
+    <div>
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 14,
+        }}
+      >
+        <span style={{ fontSize: 40 }}>{enemy.icon}</span>
+        <div style={{ flex: 1 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 18,
+                fontWeight: "bold",
+                color: enemy.isBoss ? "#fca5a5" : "#ffffff",
+              }}
+            >
+              {enemy.name}
+            </span>
+            {enemy.isBoss && (
+              <span
+                style={{
+                  fontSize: 11,
+                  padding: "2px 7px",
+                  background: "#3a0a0a",
+                  color: "#ef4444",
+                  border: "1px solid #7f1d1d",
+                  borderRadius: 4,
+                }}
+              >
+                BOSS 💀
+              </span>
+            )}
+            {enemy.isElite && (
+              <span
+                style={{
+                  fontSize: 11,
+                  padding: "2px 7px",
+                  background: "#1a1400",
+                  color: "#facc15",
+                  border: "1px solid #facc15",
+                  borderRadius: 4,
+                }}
+              >
+                ELITE ⭐
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+            {def?.desc}
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            background: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: 8,
+            color: "#94a3b8",
+            fontSize: 16,
+            cursor: "pointer",
+            padding: "6px 10px",
+            lineHeight: 1,
+          }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Mutation banner */}
+      {enemy.mutation && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "10px 12px",
+            background: "#1a1400",
+            border: "1px solid #fbbf24",
+            borderRadius: 8,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <span style={{ fontSize: 24 }}>{enemy.mutation.icon}</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: "bold", color: "#fbbf24" }}>
+              🧬 {enemy.mutation.name}
+            </div>
+            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
+              {enemy.mutation.desc}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HP bar */}
+      <div style={{ marginBottom: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 12,
+            color: "#94a3b8",
+            marginBottom: 4,
+          }}
+        >
+          <span>HP</span>
+          <span style={{ color: "#e2e8f0", fontWeight: "bold" }}>
+            {enemy.hp >= 1000
+              ? `${(enemy.hp / 1000).toFixed(1)}k`
+              : Math.ceil(enemy.hp)}
+            {" / "}
+            {enemy.maxHp >= 1000
+              ? `${(enemy.maxHp / 1000).toFixed(1)}k`
+              : enemy.maxHp}
+          </span>
+        </div>
+        <div style={{ height: 8, background: "#1e293b", borderRadius: 4 }}>
+          <div
+            style={{
+              height: "100%",
+              borderRadius: 4,
+              width: `${hpPct * 100}%`,
+              background:
+                hpPct > 0.55 ? "#4ade80" : hpPct > 0.28 ? "#facc15" : "#ef4444",
+              transition: "width 0.15s",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Core stats */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr 1fr",
+          gap: 8,
+          marginBottom: 12,
+        }}
+      >
+        {[
+          {
+            label: "ARMOR",
+            val: enemy.armor > 0 ? `${Math.round(enemy.armor * 100)}%` : "None",
+            color: enemy.armor > 0.3 ? "#fca5a5" : "#94a3b8",
+          },
+          {
+            label: "SPEED",
+            val: parseFloat(enemy.speed).toFixed(1),
+            color: "#facc15",
+          },
+          {
+            label: "PHASE",
+            val: enemy.phaseTriggered ? "P2 🔥" : "P1",
+            color: enemy.phaseTriggered ? "#ff4444" : "#94a3b8",
+          },
+        ].map(({ label, val, color }) => (
+          <div
+            key={label}
+            style={{
+              background: "#1e293b",
+              borderRadius: 8,
+              padding: "8px 10px",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                color: "#64748b",
+                marginBottom: 3,
+                letterSpacing: "0.06em",
+              }}
+            >
+              {label}
+            </div>
+            <div style={{ fontSize: 15, fontWeight: "bold", color }}>{val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Status effects */}
+      <div
+        style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}
+      >
+        {enemy.slowTimer > 0 && (
+          <span
+            style={{
+              fontSize: 11,
+              padding: "3px 8px",
+              background: "#a5f3fc22",
+              color: "#a5f3fc",
+              border: "1px solid #a5f3fc66",
+              borderRadius: 5,
+            }}
+          >
+            ❄ SLOWED
+          </span>
+        )}
+        {enemy.stunTimer > 0 && (
+          <span
+            style={{
+              fontSize: 11,
+              padding: "3px 8px",
+              background: "#fbbf2422",
+              color: "#fbbf24",
+              border: "1px solid #fbbf2466",
+              borderRadius: 5,
+            }}
+          >
+            ⚡ STUNNED
+          </span>
+        )}
+        {enemy.burnTimer > 0 && (
+          <span
+            style={{
+              fontSize: 11,
+              padding: "3px 8px",
+              background: "#f9741622",
+              color: "#f97416",
+              border: "1px solid #f9741666",
+              borderRadius: 5,
+            }}
+          >
+            🔥 BURNING{enemy.burnStacks > 1 ? ` ×${enemy.burnStacks}` : ""}
+          </span>
+        )}
+        {enemy.stealth && (
+          <span
+            style={{
+              fontSize: 11,
+              padding: "3px 8px",
+              background: "#a78bfa22",
+              color: "#a78bfa",
+              border: "1px solid #a78bfa66",
+              borderRadius: 5,
+            }}
+          >
+            👻 STEALTH
+          </span>
+        )}
+      </div>
+
+      {/* Toggle extra */}
+      <button
+        onClick={() => setShowExtra((v) => !v)}
+        style={{
+          width: "100%",
+          padding: "10px",
+          marginBottom: showExtra ? 12 : 0,
+          background: "#1e293b",
+          border: "1px solid #1e293b",
+          borderRadius: 8,
+          color: "#94a3b8",
+          fontFamily: mono,
+          fontSize: 12,
+          cursor: "pointer",
+        }}
+      >
+        {showExtra ? "▲ Hide details" : "▼ More details"}
+      </button>
+
+      {showExtra && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {/* Immunities / weakness */}
+          {(def?.immunities?.length > 0 || def?.weakness) && (
+            <div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "#64748b",
+                  marginBottom: 6,
+                  letterSpacing: "0.06em",
+                }}
+              >
+                IMMUNITIES & WEAKNESS
+              </div>
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                {def.immunities?.map((im) => (
+                  <span
+                    key={im}
+                    style={{
+                      fontSize: 11,
+                      padding: "3px 8px",
+                      background: "#3a1a1a",
+                      color: "#fca5a5",
+                      border: "1px solid #7f1d1d",
+                      borderRadius: 5,
+                    }}
+                  >
+                    🚫 {TOWER_TYPES[im]?.name || im}
+                  </span>
+                ))}
+                {def?.weakness && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      padding: "3px 8px",
+                      background: "#0f2a0f",
+                      color: "#86efac",
+                      border: "1px solid #166534",
+                      borderRadius: 5,
+                    }}
+                  >
+                    ✓ {TOWER_TYPES[def.weakness]?.name}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Active evolutions */}
+          {enemy.activeEvolutions?.length > 0 && (
+            <div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "#64748b",
+                  marginBottom: 6,
+                  letterSpacing: "0.06em",
+                }}
+              >
+                EVOLUTIONS
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {enemy.activeEvolutions.map((evoId) => (
+                  <span
+                    key={evoId}
+                    style={{
+                      fontSize: 11,
+                      padding: "3px 8px",
+                      background: "#1a0808",
+                      color: "#fca5a5",
+                      border: "1px solid #7f1d1d",
+                      borderRadius: 5,
+                    }}
+                  >
+                    {evoId.replace(/_/g, " ")}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {def?.tip && (
+            <div
+              style={{
+                fontSize: 12,
+                color: "#fbbf24",
+                padding: "8px 10px",
+                background: "#1a1a0a",
+                borderRadius: 6,
+                border: "1px solid #3a3000",
+                lineHeight: 1.5,
+              }}
+            >
+              💡 {def.tip}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CanvasTowerCard({
+  tower,
+  gold,
+  wave,
+  onUpgrade,
+  onRepairTower,
+  onClose,
+  onFullUpgrade,
+}) {
+  const mono = "'Courier New', monospace";
+  const [showExtra, setShowExtra] = useState(false);
+  const def = TOWER_TYPES[tower.type];
+  const upgDef = TOWER_UPGRADES[tower.type];
+  if (!def) return null;
+
+  const hpPct = tower.hp / tower.maxHp;
+  const atkPerSec = (60 / Math.max(1, tower.fireRate)).toFixed(1);
+
+  const tierLabel = tower.legendary100Unlocked
+    ? "✦✦ L100"
+    : tower.legendaryUnlocked
+      ? "✦ L50"
+      : tower.skill10chosen
+        ? "T2"
+        : tower.skill5chosen
+          ? "T1"
+          : `P${tower.passiveTier}`;
+  const tierColor = tower.legendary100Unlocked
+    ? "#ef4444"
+    : tower.legendaryUnlocked
+      ? "#f59e0b"
+      : tower.skill10chosen
+        ? "#fbbf24"
+        : tower.skill5chosen
+          ? "#38bdf8"
+          : "#64748b";
+  const tierBg = tower.legendary100Unlocked
+    ? "#450a0a"
+    : tower.legendaryUnlocked
+      ? "#451a03"
+      : tower.skill10chosen
+        ? "#1a1400"
+        : tower.skill5chosen
+          ? "#0a1a2a"
+          : "#1e293b";
+
+  const dmgTypeColor =
+    def.damageType === "magical"
+      ? "#c4b5fd"
+      : def.damageType === "hybrid"
+        ? "#a5f3fc"
+        : "#86efac";
+  const dmgTypeLabel =
+    def.damageType === "magical"
+      ? "MAG"
+      : def.damageType === "hybrid"
+        ? "HYB"
+        : "PHY";
+
+  const nextUpgrade = (() => {
+    if (!upgDef) return null;
+    if (tower.upgradeReadyType === "skill5" && !tower.skill5chosen)
+      return {
+        type: "skill5",
+        options: [upgDef.skill5?.A, upgDef.skill5?.B],
+        paths: ["A", "B"],
+      };
+    if (tower.upgradeReadyType === "skill10" && !tower.skill10chosen)
+      return {
+        type: "skill10",
+        options: [upgDef.skill10?.A, upgDef.skill10?.B],
+        paths: ["A", "B"],
+      };
+    if (tower.upgradeReadyType === "legendary50" && !tower.legendaryUnlocked) {
+      const cost = Math.floor(
+        (upgDef.legendary50?.A?.cost || 0) * (1 + wave * 0.04),
+      );
+      return {
+        type: "legendary50",
+        options: [upgDef.legendary50?.A, upgDef.legendary50?.B],
+        paths: ["A", "B"],
+        scaledCost: cost,
+      };
+    }
+    if (
+      tower.upgradeReadyType === "legendary100" &&
+      !tower.legendary100Unlocked
+    ) {
+      const cost = Math.floor(
+        (upgDef.legendary100?.A?.cost || 0) * (1 + wave * 0.06),
+      );
+      return {
+        type: "legendary100",
+        options: [upgDef.legendary100?.A, upgDef.legendary100?.B],
+        paths: ["A", "B"],
+        scaledCost: cost,
+      };
+    }
+    return null;
+  })();
+
+  return (
+    <div>
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 14,
+        }}
+      >
+        <span style={{ fontSize: 40 }}>{def.icon}</span>
+        <div style={{ flex: 1 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <span
+              style={{ fontSize: 18, fontWeight: "bold", color: def.color }}
+            >
+              {def.name}
+            </span>
+            <span
+              style={{
+                fontSize: 11,
+                padding: "2px 8px",
+                background: tierBg,
+                color: tierColor,
+                border: `1px solid ${tierColor}`,
+                borderRadius: 4,
+                fontWeight: "bold",
+              }}
+            >
+              {tierLabel}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+            {tower.kills} kills · {Math.floor(tower.xp)} xp
+          </div>
+        </div>
+        <button
+          onClick={onFullUpgrade}
+          style={{
+            background: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: 8,
+            color: "#94a3b8",
+            fontSize: 12,
+            cursor: "pointer",
+            padding: "6px 10px",
+            fontFamily: mono,
+          }}
+        >
+          ⬆ Full
+        </button>
+        <button
+          onClick={onClose}
+          style={{
+            background: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: 8,
+            color: "#94a3b8",
+            fontSize: 16,
+            cursor: "pointer",
+            padding: "6px 10px",
+            lineHeight: 1,
+          }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Core stats */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr 1fr 1fr",
+          gap: 8,
+          marginBottom: 12,
+        }}
+      >
+        {[
+          {
+            label: "DMG",
+            val: tower.currentDamage ?? Math.round(tower.damage),
+            color: "#fca5a5",
+          },
+          { label: "ATK/s", val: atkPerSec, color: "#fb923c" },
+          { label: "RANGE", val: Math.round(tower.range), color: "#38bdf8" },
+          { label: "TYPE", val: dmgTypeLabel, color: dmgTypeColor },
+        ].map(({ label, val, color }) => (
+          <div
+            key={label}
+            style={{
+              background: "#1e293b",
+              borderRadius: 8,
+              padding: "8px 6px",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                color: "#64748b",
+                marginBottom: 3,
+                letterSpacing: "0.06em",
+              }}
+            >
+              {label}
+            </div>
+            <div style={{ fontSize: 15, fontWeight: "bold", color }}>{val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* XP bar */}
+      <div style={{ marginBottom: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 12,
+            color: "#94a3b8",
+            marginBottom: 4,
+          }}
+        >
+          <span>XP</span>
+          <span
+            style={{
+              color: tower.upgradeReady ? "#fbbf24" : "#94a3b8",
+              fontWeight: tower.upgradeReady ? "bold" : "normal",
+            }}
+          >
+            {tower.upgradeReady
+              ? `✦ ${tower.upgradeReadyType?.replace(/([0-9]+)/, " $1").toUpperCase()} READY`
+              : `${Math.floor(tower.xp)} xp`}
+          </span>
+        </div>
+        <div style={{ height: 8, background: "#1e293b", borderRadius: 4 }}>
+          <div
+            style={{
+              height: "100%",
+              borderRadius: 4,
+              width: `${Math.min(100, (tower.xp / (upgDef?.skill5?.xp || 999)) * 100)}%`,
+              background: tower.upgradeReady ? "#fbbf24" : "#38bdf8",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Damaged / repair */}
+      {tower.hp < tower.maxHp && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "10px 12px",
+            background: tower.disabled ? "#2a0a0a" : "#1a1400",
+            border: `1px solid ${tower.disabled ? "#ef4444" : "#f97316"}`,
+            borderRadius: 8,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 13,
+              color: tower.disabled ? "#ef4444" : "#f97316",
+              marginBottom: 6,
+            }}
+          >
+            <span>{tower.disabled ? "⚠ DISABLED" : "🔧 DAMAGED"}</span>
+            <span style={{ color: "#94a3b8" }}>
+              {Math.ceil(tower.hp)}/{tower.maxHp} HP
+            </span>
+          </div>
+          <div
+            style={{
+              height: 6,
+              background: "#1e293b",
+              borderRadius: 3,
+              marginBottom: 8,
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${hpPct * 100}%`,
+                background:
+                  hpPct > 0.6 ? "#4ade80" : hpPct > 0.3 ? "#facc15" : "#ef4444",
+                borderRadius: 3,
+              }}
+            />
+          </div>
+          <button
+            onClick={() => onRepairTower(tower.col, tower.row)}
+            disabled={gold < (tower.repairCost || 0)}
+            style={{
+              width: "100%",
+              padding: "8px",
+              background:
+                gold >= (tower.repairCost || 0) ? "#1a2a0a" : "#1e293b",
+              border: `1px solid ${gold >= (tower.repairCost || 0) ? "#4ade80" : "#374151"}`,
+              borderRadius: 6,
+              fontFamily: mono,
+              fontSize: 13,
+              color: gold >= (tower.repairCost || 0) ? "#4ade80" : "#374151",
+              cursor:
+                gold >= (tower.repairCost || 0) ? "pointer" : "not-allowed",
+            }}
+          >
+            🔧 Repair — {tower.repairCost || 0}g
+          </button>
+        </div>
+      )}
+
+      {/* Toggle extra stats */}
+      <button
+        onClick={() => setShowExtra((v) => !v)}
+        style={{
+          width: "100%",
+          padding: "10px",
+          marginBottom: showExtra ? 12 : 0,
+          background: "#1e293b",
+          border: "1px solid #1e293b",
+          borderRadius: 8,
+          color: "#94a3b8",
+          fontFamily: mono,
+          fontSize: 12,
+          cursor: "pointer",
+        }}
+      >
+        {showExtra ? "▲ Hide stats" : "▼ More stats"}
+      </button>
+
+      {showExtra && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr",
+            gap: 8,
+            marginBottom: 12,
+          }}
+        >
+          {[
+            tower.splash > 0 && {
+              label: "Splash",
+              val: Math.round(tower.splash),
+              color: "#f97316",
+            },
+            tower.slowFactor > 0 && {
+              label: "Slow",
+              val: `${Math.round(tower.slowFactor * 100)}%`,
+              color: "#a5f3fc",
+            },
+            tower.burnDamage > 0 && {
+              label: "Burn DMG",
+              val: tower.burnDamage,
+              color: "#ef4444",
+            },
+            tower.chainTargets > 0 && {
+              label: "Chains",
+              val: tower.chainTargets,
+              color: "#fbbf24",
+            },
+            tower.armorPiercing && {
+              label: "Pierce",
+              val: "YES",
+              color: "#86efac",
+            },
+            tower.homing && { label: "Homing", val: "YES", color: "#fca5a5" },
+          ]
+            .filter(Boolean)
+            .map(({ label, val, color }) => (
+              <div
+                key={label}
+                style={{
+                  background: "#1e293b",
+                  borderRadius: 8,
+                  padding: "8px 6px",
+                  textAlign: "center",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#64748b",
+                    marginBottom: 3,
+                    letterSpacing: "0.06em",
+                  }}
+                >
+                  {label}
+                </div>
+                <div style={{ fontSize: 14, fontWeight: "bold", color }}>
+                  {val}
+                </div>
+              </div>
+            ))}
+
+          {tower.specials?.length > 0 && (
+            <div style={{ gridColumn: "span 3", marginTop: 4 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "#64748b",
+                  marginBottom: 6,
+                  letterSpacing: "0.06em",
+                }}
+              >
+                SPECIALS
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {tower.specials.map((s) => (
+                  <span
+                    key={s}
+                    style={{
+                      fontSize: 11,
+                      padding: "3px 8px",
+                      background: "#12002a",
+                      color: "#c4b5fd",
+                      border: "1px solid #3b1a5a",
+                      borderRadius: 5,
+                    }}
+                  >
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Inline upgrade choice */}
+      {nextUpgrade && (
+        <div
+          style={{
+            borderTop: "1px solid #1e293b",
+            paddingTop: 12,
+            marginTop: 4,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              color: "#fbbf24",
+              marginBottom: 10,
+              fontWeight: "bold",
+            }}
+          >
+            ✦ UPGRADE READY — Choose one:
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {nextUpgrade.options.map((opt, i) => {
+              if (!opt) return null;
+              const cost = nextUpgrade.scaledCost ?? opt.cost;
+              const canBuy = gold >= cost;
+              return (
+                <button
+                  key={i}
+                  onClick={() =>
+                    canBuy &&
+                    onUpgrade(
+                      tower.col,
+                      tower.row,
+                      nextUpgrade.type,
+                      nextUpgrade.paths[i],
+                    )
+                  }
+                  style={{
+                    flex: 1,
+                    padding: "10px 10px",
+                    background: canBuy ? "#1a1a0a" : "#1e293b",
+                    border: `1px solid ${canBuy ? "#fbbf24" : "#1e293b"}`,
+                    borderRadius: 8,
+                    fontFamily: mono,
+                    color: canBuy ? "#fde68a" : "#374151",
+                    cursor: canBuy ? "pointer" : "not-allowed",
+                    textAlign: "left",
+                  }}
+                >
+                  <div style={{ fontSize: 22, marginBottom: 4 }}>
+                    {opt.icon}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: "bold",
+                      marginBottom: 4,
+                    }}
+                  >
+                    {opt.name}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "#94a3b8",
+                      lineHeight: 1.4,
+                      marginBottom: 8,
+                    }}
+                  >
+                    {opt.desc}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      color: canBuy ? "#facc15" : "#374151",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {cost}g
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

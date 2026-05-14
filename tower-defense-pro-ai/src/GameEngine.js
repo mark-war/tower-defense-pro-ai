@@ -45,6 +45,9 @@ export class GameEngine {
     this.isEndless = isEndless;
     this.xpMult = lvl.xpMult ?? 1.0;
 
+    this.autoRepair = false;
+    this.autoRepairCostPerWave = 0;
+
     // ── MAP HANDLING ─────────────────────────────────────
     let mapKeyToUse = savedMapKey || "valley";
 
@@ -191,6 +194,12 @@ export class GameEngine {
   setSkin(skinId) {
     this.activeSkin = SKINS[skinId] || SKINS.default;
     this._emitState();
+  }
+
+  toggleAutoRepair() {
+    this.autoRepair = !this.autoRepair;
+    this._emitState();
+    return this.autoRepair;
   }
 
   _setupCanvas() {
@@ -675,6 +684,22 @@ export class GameEngine {
     if (this.state !== "idle") return;
     this.wave++;
 
+    // ── Scale tower HP with waves so late-game towers survive longer ──────
+    if (this.wave > 1) {
+      const hpScale = 1 + this.wave * 0.018; // +1.8% max HP per wave
+      for (const tower of this.towers) {
+        const newMax = Math.floor(TOWER_TYPES[tower.type].towerMaxHp * hpScale);
+        if (newMax > tower.maxHp) {
+          const diff = newMax - tower.maxHp;
+          tower.maxHp = newMax;
+          tower.hp = Math.min(tower.maxHp, tower.hp + diff); // heal the difference
+          tower.repairCost = Math.ceil(
+            ((tower.maxHp - tower.hp) / tower.maxHp) * tower.cost * 0.4,
+          );
+        }
+      }
+    }
+
     if (this.isEndless && this.wave % 10 === 0 && this.wave > 0) {
       const bonusPool = [
         { type: "gold", value: 0.2, label: "💰 +20% gold drops" },
@@ -809,8 +834,13 @@ export class GameEngine {
     // Roll boss mutation (wave 30+)
     this._pendingBossMutation = null;
     if (bossType && ENEMY_TYPES[bossType] && this.wave >= 30) {
+      const eligibleMutations = BOSS_MUTATIONS.filter((m) => {
+        const minOk = !m.minWave || this.wave >= m.minWave;
+        const maxOk = !m.maxWave || this.wave <= m.maxWave;
+        return minOk && maxOk;
+      });
       this._pendingBossMutation =
-        BOSS_MUTATIONS[Math.floor(Math.random() * BOSS_MUTATIONS.length)];
+        eligibleMutations[Math.floor(Math.random() * eligibleMutations.length)];
     }
 
     if (bossType && ENEMY_TYPES[bossType]) {
@@ -990,6 +1020,16 @@ export class GameEngine {
       if (e.isBoss && this._pendingBossMutation) {
         this._pendingBossMutation = null;
       }
+    }
+
+    // ── Apply gravity immune from mutation ────────────────────────────────
+    if (e.mutation?.apply?.gravityImmune) {
+      e.gravityImmune = true;
+    }
+
+    // ── Apply tower damage multiplier from mutation ────────────────────────
+    if (e.mutation?.apply?.towerDamageMult) {
+      e.towerDamageMult = e.mutation.apply.towerDamageMult;
     }
 
     // ── Empowered boss loot override ──────────────────────────────────────────
@@ -1293,6 +1333,99 @@ export class GameEngine {
         }
       }
 
+      // ── Decay anti-heal timer ─────────────────────────────────────────────
+      if (e._antiHealTimer > 0) {
+        e._antiHealTimer--;
+        if (e._antiHealTimer === 0) e._antiHealApplied = false;
+      }
+
+      // ── VOID STEP: teleport forward periodically ──────────────────────────
+      if (e.mutation?.apply?.voidStep) {
+        e._voidStepTimer = (e._voidStepTimer || 0) + 1;
+        if (e._voidStepTimer >= e.mutation.apply.voidStepInterval) {
+          e._voidStepTimer = 0;
+          const activePath = e._altPath ?? this.path;
+          const targetIdx = Math.min(
+            Math.floor(activePath.length * e.mutation.apply.voidStepFraction) +
+              e.pathIndex,
+            activePath.length - 2,
+          );
+          if (targetIdx > e.pathIndex) {
+            e.pathIndex = targetIdx;
+            e.x = activePath[targetIdx].x;
+            e.y = activePath[targetIdx].y;
+            this._addParticles(e.x, e.y, "#818cf8", 20);
+            this._addFloatingText(e.x, e.y - 30, "⚡ VOID STEP!", "#818cf8");
+          }
+        }
+      }
+
+      // ── BERSERKER: speed stacks on HP loss ───────────────────────────────
+      if (e.mutation?.apply?.berserker) {
+        const hpPct = e.hp / e.maxHp;
+        const mut = e.mutation.apply;
+        const stacks = Math.min(
+          Math.floor((1 - hpPct) / mut.berserkerStackSize),
+          mut.berserkerMaxStacks,
+        );
+        if (stacks !== (e._berserkerStacks || 0)) {
+          e._berserkerStacks = stacks;
+          const boost = 1 + stacks * mut.berserkerSpeedBonus;
+          e.baseSpeed =
+            (ENEMY_TYPES[e.type]?.speed || 1) *
+            boost *
+            (1 + this.wave * ADMIN_CONFIG.ai.endlessSpeedPerWave);
+          if (stacks > 0) {
+            this._addFloatingText(
+              e.x,
+              e.y - 24,
+              `🔥 BERSERK ×${stacks}!`,
+              "#ef4444",
+            );
+          }
+        }
+      }
+
+      // ── ADAPTIVE IMMUNITY: cycle immunity every N frames ──────────────────
+      if (e.mutation?.apply?.adaptiveImmunity) {
+        e._adaptiveTimer = (e._adaptiveTimer || 0) + 1;
+        if (e._adaptiveTimer >= e.mutation.apply.adaptiveInterval) {
+          e._adaptiveTimer = 0;
+          // Remove old adaptive immunity
+          e.immunities = e.immunities.filter(
+            (i) => i !== e._adaptiveCurrentImmunity,
+          );
+          // Add immunity to last tower that hit it
+          if (e._lastHitByTower && !e.immunities.includes(e._lastHitByTower)) {
+            e._adaptiveCurrentImmunity = e._lastHitByTower;
+            e.immunities.push(e._lastHitByTower);
+            const tDef = TOWER_TYPES[e._lastHitByTower];
+            this._addFloatingText(
+              e.x,
+              e.y - 30,
+              `🧬 IMMUNE: ${tDef?.name || e._lastHitByTower}!`,
+              "#fbbf24",
+            );
+          }
+        }
+      }
+
+      // ── BURN SPEED BOOST: Thermal Boost evolution ─────────────────────────
+      if (e.activeEvolutions?.includes("fast_vs_inferno") && e.burnTimer > 0) {
+        e.baseSpeed =
+          (ENEMY_TYPES[e.type]?.speed || 1) *
+          (1 + this.wave * ADMIN_CONFIG.ai.endlessSpeedPerWave) *
+          (1 + (e._thermalBoost || 0.4));
+      } else if (
+        e.activeEvolutions?.includes("fast_vs_inferno") &&
+        e.burnTimer <= 0
+      ) {
+        // Reset speed when not burning
+        e.baseSpeed =
+          (ENEMY_TYPES[e.type]?.speed || 1) *
+          (1 + this.wave * ADMIN_CONFIG.ai.endlessSpeedPerWave);
+      }
+
       // ── Medic escort — stay with nearby allies, don't race ahead ─────────
       if (e.type === "healer") {
         const escortRadius = (ENEMY_TYPES.healer.healRadius || 90) * 2.2;
@@ -1364,7 +1497,8 @@ export class GameEngine {
       if (
         e.mutation?.apply?.regenRate &&
         this.tick % 60 === 0 &&
-        e.hp < e.maxHp
+        e.hp < e.maxHp &&
+        !e._antiHealTimer // ← add this guard
       ) {
         e.hp = Math.min(e.maxHp, e.hp + e.maxHp * e.mutation.apply.regenRate);
       }
@@ -1373,12 +1507,25 @@ export class GameEngine {
       if (
         this.activeModifier?.apply?.enemyRegenRate &&
         this.tick % 60 === 0 &&
-        e.hp < e.maxHp
+        e.hp < e.maxHp &&
+        !e._antiHealTimer // ← add this guard
       ) {
         e.hp = Math.min(
           e.maxHp,
           e.hp + e.maxHp * this.activeModifier.apply.enemyRegenRate,
         );
+      }
+
+      if (
+        e.mutation?.apply?.regenRate &&
+        e.phaseTriggered &&
+        e.mutation.apply.phase2RegenMult &&
+        this.tick % 60 === 0 &&
+        !e._antiHealTimer // ← add this guard
+      ) {
+        const rate =
+          e.mutation.apply.regenRate * e.mutation.apply.phase2RegenMult;
+        e.hp = Math.min(e.maxHp, e.hp + e.maxHp * rate);
       }
 
       // ── Boss mutation: phase cloak (stealth below HP threshold) ──────────
@@ -1466,11 +1613,25 @@ export class GameEngine {
 
         if (atkDps > 0) {
           for (const tower of this.towers) {
+            // ── Decay mirror shield cooldown ──────────────────────────────────
+            if (tower._mirrorCooldown > 0) tower._mirrorCooldown--;
+
             const dx = tower.x - e.x,
               dy = tower.y - e.y;
             if (Math.sqrt(dx * dx + dy * dy) <= atkRng) {
               const resist = tower.damageResist || 0;
-              const actualDmg = dmgPer20 * (1 - resist);
+
+              const hasBulwark = this.towers.some(
+                (t) =>
+                  t.specials?.includes("bulwarkField") &&
+                  Math.sqrt((t.x - tower.x) ** 2 + (t.y - tower.y) ** 2) <=
+                    t.range,
+              );
+
+              const bulwarkReduction = hasBulwark ? 0.4 : 0;
+              const actualDmg =
+                dmgPer20 * (1 - resist) * (1 - bulwarkReduction);
+
               tower.hp = Math.max(0, tower.hp - actualDmg);
               tower.lastDamagedTick = this.tick;
               tower.repairCost = Math.ceil(
@@ -2012,6 +2173,42 @@ export class GameEngine {
         Math.round(tower.fireRate * fireRateMult * modFireRateMult),
       );
     }
+
+    // ── AUTO-REPAIR: slowly heal damaged towers during wave ───────────────
+    if (this.autoRepair && this.tick % 60 === 0) {
+      const damagedTowers = this.towers.filter(
+        (t) => t.hp < t.maxHp && !t.disabled,
+      );
+      for (const tower of damagedTowers) {
+        const healAmt = tower.maxHp * 0.04; // 4% HP per second
+        const healCost = Math.ceil(tower.cost * 0.008); // tiny gold cost per heal tick
+
+        if (this.gold >= healCost) {
+          this.gold -= healCost;
+          tower.hp = Math.min(tower.maxHp, tower.hp + healAmt);
+          tower.repairCost = Math.ceil(
+            ((tower.maxHp - tower.hp) / tower.maxHp) * tower.cost * 0.4,
+          );
+          if (tower.hp >= tower.maxHp) {
+            tower.repairCost = 0;
+            this._addFloatingText(
+              tower.x,
+              tower.y - 18,
+              "🔧 Repaired!",
+              "#4ade80",
+            );
+          }
+        }
+      }
+
+      // Re-enable disabled towers that got healed above threshold
+      for (const tower of this.towers) {
+        if (tower.disabled && tower.hp > tower.maxHp * 0.3) {
+          tower.disabled = false;
+          this._addFloatingText(tower.x, tower.y - 18, "↑ Online!", "#4ade80");
+        }
+      }
+    }
   }
 
   _addBolt(x1, y1, x2, y2, color) {
@@ -2454,7 +2651,9 @@ export class GameEngine {
         if (e.stealth && !canHitStealth) continue;
         const bypassesImmunity =
           p.specials?.includes("fullPierce") ||
-          p.specials?.includes("shieldPierce");
+          p.specials?.includes("shieldPierce") ||
+          p.specials?.includes("immunityBreak");
+
         if (e.immunities.includes(p.towerType) && !bypassesImmunity) continue;
         if (isPiercing && p.piercedEnemies.has(e.id)) continue;
 
@@ -2539,26 +2738,43 @@ export class GameEngine {
         this._damageEnemy(se, dmg, p);
 
         if (p.pullForce > 0 && sd > 2) {
-          const ang = Math.atan2(p.y - se.y, p.x - se.x);
-          const effectivePull = p.pullForce * (1 - sd / p.splash);
-          se.x += Math.cos(ang) * effectivePull;
-          se.y += Math.sin(ang) * effectivePull;
-
-          // Path setback — strong pulls move enemies back on the route
-          // This is what makes vortex feel impactful vs just displacing XY
-          if (effectivePull >= 1.5 && !se.isBoss && se.pathIndex > 0) {
-            const stepsBack = Math.min(
-              Math.floor(effectivePull / 2.5),
-              Math.floor(se.pathIndex * 0.25), // cap at 25% of progress
+          if (se._gravityImmune || se.gravityImmune) {
+            // Bulwark field gives half pull to gravity-immune
+            const hasBulwark = this.towers.some(
+              (t) =>
+                t.specials?.includes("bulwarkField") &&
+                Math.sqrt((t.x - p.x) ** 2 + (t.y - p.y) ** 2) <= t.range * 1.5,
             );
-            if (stepsBack > 0) {
-              se.pathIndex = Math.max(0, se.pathIndex - stepsBack);
-              se.x = this.path[se.pathIndex].x;
-              se.y = this.path[se.pathIndex].y;
-              se.distanceTraveled = Math.max(
-                0,
-                se.distanceTraveled - stepsBack * 12,
+            if (hasBulwark) {
+              // Half pull only
+              const ang = Math.atan2(p.y - se.y, p.x - se.x);
+              const effectivePull = p.pullForce * (1 - sd / p.splash);
+              se.x += Math.cos(ang) * effectivePull * 0.5;
+              se.y += Math.sin(ang) * effectivePull * 0.5;
+            }
+            // skip full pull
+          } else {
+            const ang = Math.atan2(p.y - se.y, p.x - se.x);
+            const effectivePull = p.pullForce * (1 - sd / p.splash);
+            se.x += Math.cos(ang) * effectivePull;
+            se.y += Math.sin(ang) * effectivePull;
+
+            // Path setback — strong pulls move enemies back on the route
+            // This is what makes vortex feel impactful vs just displacing XY
+            if (effectivePull >= 1.5 && !se.isBoss && se.pathIndex > 0) {
+              const stepsBack = Math.min(
+                Math.floor(effectivePull / 2.5),
+                Math.floor(se.pathIndex * 0.25), // cap at 25% of progress
               );
+              if (stepsBack > 0) {
+                se.pathIndex = Math.max(0, se.pathIndex - stepsBack);
+                se.x = this.path[se.pathIndex].x;
+                se.y = this.path[se.pathIndex].y;
+                se.distanceTraveled = Math.max(
+                  0,
+                  se.distanceTraveled - stepsBack * 12,
+                );
+              }
             }
           }
         }
@@ -2684,6 +2900,18 @@ export class GameEngine {
       dmg *= 1 - effectiveArmor;
     }
 
+    // ── EXECUTE: Cremation — 4× burn damage below 20% HP ─────────────────
+    if (
+      proj?.specials?.includes("execute") &&
+      enemy.hp / enemy.maxHp <= 0.2 &&
+      proj?.burnDamage
+    ) {
+      // Applied by multiplying the burn damage on the enemy
+      enemy.burnDmg = Math.max(enemy.burnDmg, proj.burnDamage * 4);
+      enemy.burnTimer = Math.max(enemy.burnTimer, 120);
+      enemy.burnSourceId = proj.towerId;
+    }
+
     // ── SHATTER BUFF: frozen/slowed enemies take 2× damage ───────────────────
     if (!isTrueDmg) {
       const attackingTower = proj?.towerId
@@ -2732,6 +2960,107 @@ export class GameEngine {
     }
 
     enemy.hp -= dmg;
+
+    // ── Track last tower that hit for adaptive immunity ───────────────────
+    if (proj?.towerType) {
+      enemy._lastHitByTower = proj.towerType;
+    }
+
+    // ── IMMUNITY BREAK: tesla godstorm — strips adaptive immunity ─────────
+    if (proj?.specials?.includes("immunityBreak")) {
+      // Works as fullPierce — bypass all immunities
+      // Also strip adaptive immunity permanently
+      if (enemy._adaptiveCurrentImmunity) {
+        enemy.immunities = enemy.immunities.filter(
+          (i) => i !== enemy._adaptiveCurrentImmunity,
+        );
+        enemy._adaptiveCurrentImmunity = null;
+        enemy._adaptiveTimer = 0; // reset cycle
+        this._addFloatingText(
+          enemy.x,
+          enemy.y - 24,
+          "⚡ IMMUNITY STRIPPED!",
+          "#fbbf24",
+        );
+      }
+    }
+
+    // ── ANTI-HEAL: sniper hemorrhage — blocks all regen for 6 seconds ────
+    if (proj?.specials?.includes("antiHeal")) {
+      enemy._antiHealTimer = 360; // 6 seconds at 60fps
+      if (!enemy._antiHealApplied) {
+        enemy._antiHealApplied = true;
+        this._addFloatingText(enemy.x, enemy.y - 20, "🩸 NO REGEN!", "#ef4444");
+      }
+    }
+
+    // ── MIRROR SHIELD: reflect damage to nearest tower ────────────────────
+    if (enemy.mutation?.apply?.mirrorShield && proj?.towerId) {
+      const sourceTower = this.towers.find((t) => t.id === proj.towerId);
+      if (sourceTower) {
+        // ── Per-tower cooldown so rapid-fire towers aren't destroyed ─────
+        sourceTower._mirrorCooldown = sourceTower._mirrorCooldown || 0;
+        if (sourceTower._mirrorCooldown > 0) {
+          // skip reflect this hit
+        } else {
+          const reflectPct = enemy.mutation.apply.mirrorShield;
+          const reflectCap = enemy.mutation.apply.mirrorShieldCap || 15;
+          const reflectDmg = Math.min(dmg * reflectPct, reflectCap);
+
+          // Only reflect if tower isn't already critically damaged
+          if (sourceTower.hp > sourceTower.maxHp * 0.15) {
+            const resist = sourceTower.damageResist || 0;
+            const actualReflect = reflectDmg * (1 - resist);
+
+            sourceTower.hp = Math.max(
+              sourceTower.maxHp * 0.1, // ← floor at 10% — never instant kill
+              sourceTower.hp - actualReflect,
+            );
+            sourceTower.lastDamagedTick = this.tick;
+            sourceTower.repairCost = Math.ceil(
+              ((sourceTower.maxHp - sourceTower.hp) / sourceTower.maxHp) *
+                sourceTower.cost *
+                0.4,
+            );
+            sourceTower._mirrorCooldown =
+              enemy.mutation.apply.mirrorShieldCooldown || 180;
+
+            this._addParticles(sourceTower.x, sourceTower.y, "#a78bfa", 5);
+
+            // Only disable if HP truly reaches 0 from direct enemy attacks,
+            // never from reflection alone
+            if (sourceTower.hp <= sourceTower.maxHp * 0.1) {
+              this._addFloatingText(
+                sourceTower.x,
+                sourceTower.y - 20,
+                "🪞 REFLECTED!",
+                "#a78bfa",
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // ── LEECH: heal on tower damage ───────────────────────────────────────
+    if (enemy.mutation?.apply?.leech && proj?.towerId) {
+      const sourceTower = this.towers.find((t) => t.id === proj.towerId);
+      if (sourceTower && sourceTower.hp < sourceTower.maxHp) {
+        const healAmt = enemy.maxHp * enemy.mutation.apply.leech;
+        enemy.hp = Math.min(enemy.maxHp, enemy.hp + healAmt);
+        this._addParticles(enemy.x, enemy.y, "#4ade80", 4);
+      }
+    }
+
+    // ── GRAVITY IMMUNE: ignore vortex pull ────────────────────────────────
+    if (
+      (enemy.gravityImmune || enemy.mutation?.apply?.gravityImmune) &&
+      proj?.towerType === "vortex"
+    ) {
+      // Cancel the pull force by undoing position change
+      // (pull is applied in _dealSplashDamage, flag checked there)
+      enemy._gravityImmune = true;
+    }
 
     // ── OMEGA RIFT: teleport enemies back 50% of path ────────────────────────
     if (proj?.specials?.includes("omegaRift")) {
@@ -3169,6 +3498,21 @@ export class GameEngine {
     this._streakCount++;
     this._streakTimer = 90;
 
+    // ── EXECUTE: reset berserker stacks on kill ───────────────────────────
+    const killerTower = this.towers.find((t) => t.id === towerId);
+    if (
+      killerTower?.specials?.includes("execute") &&
+      enemy._berserkerStacks > 0
+    ) {
+      enemy._berserkerStacks = 0;
+      this._addFloatingText(
+        enemy.x,
+        enemy.y - 20,
+        "💀 BERSERKER RESET!",
+        "#ef4444",
+      );
+    }
+
     // Gold bonus every 5 kills in streak
     if (this._streakCount >= 5 && this._streakCount % 5 === 0) {
       const streakBonus = Math.min(
@@ -3246,6 +3590,41 @@ export class GameEngine {
     if (enemy.spawnsOnDeath && enemy.spawnCount > 0)
       for (let i = 0; i < enemy.spawnCount; i++)
         this._spawnChildAt(enemy, enemy.spawnsOnDeath);
+
+    // ── SPLINTER: split into copies on death ─────────────────────────────
+    if (enemy.mutation?.apply?.splinterDeath && enemy.isBoss) {
+      const count = enemy.mutation.apply.splinterCount || 3;
+      const hpFrac = enemy.mutation.apply.splinterHpFraction || 0.3;
+      for (let si = 0; si < count; si++) {
+        const splinter = {
+          ...enemy,
+          id: Date.now() + Math.random() + si,
+          hp: enemy.maxHp * hpFrac,
+          maxHp: enemy.maxHp * hpFrac,
+          size: enemy.size * 0.65,
+          x: enemy.x + (Math.random() - 0.5) * 30,
+          y: enemy.y + (Math.random() - 0.5) * 30,
+          mutation: null, // splinters don't inherit mutation
+          twinSpawned: true,
+          isSplinter: true,
+          reward: Math.floor(enemy.reward * 0.3),
+          slowTimer: 0,
+          stunTimer: 0,
+          burnTimer: 0,
+          assistTowers: new Set(),
+          _berserkerStacks: 0,
+          _voidStepTimer: 0,
+        };
+        this.enemies.push(splinter);
+      }
+      this._addFloatingText(
+        enemy.x,
+        enemy.y - 30,
+        `💥 SPLINTER ×${count}!`,
+        "#ef4444",
+      );
+      this._addParticles(enemy.x, enemy.y, enemy.color, 40);
+    }
 
     // ── ICE AGE: on kill freeze all nearby enemies 3s ────────────────────────
     const hasIceAge = this.towers.some((t) => t.specials?.includes("iceAge"));
@@ -4870,7 +5249,22 @@ export class GameEngine {
         disabled: t.disabled,
         repairCost: t.repairCost || 0,
         damageType: TOWER_TYPES[t.type]?.damageType || "physical",
+
+        // ── ADDITIONAL STATS ──────────────────────────────────────
+        currentDamage: Math.round(t.damage), // live damage (not totalDamage)
+        fireRate: t.fireRate,
+        range: Math.round(t.range),
+        splash: t.splash || 0,
+        slowFactor: t.slowFactor || 0,
+        burnDamage: t.burnDamage || 0,
+        chainTargets: t.chainTargets || 0,
+        armorPiercing: t.armorPiercing || false,
+        homing: t.homing || false,
       })),
+      autoRepair: this.autoRepair,
+      autoRepairCostPerSec:
+        this.towers.filter((t) => t.hp < t.maxHp).length *
+        Math.ceil(50 * 0.008), // rough estimate shown in UI
     });
   }
 
@@ -4901,7 +5295,9 @@ export class GameEngine {
     this._loop();
   }
 
-  startEndlessWithMap(mapDef) {
+  startEndlessWithMap(mapKey, mapDef) {
+    this._currentMapKey = mapKey;
+
     this.mapDef = mapDef;
     this.activeMapBonus = mapDef.mapBonus || null;
     this.path = this._buildPath(mapDef.waypoints);

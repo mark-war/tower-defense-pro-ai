@@ -45,6 +45,7 @@ export function HUD({
   onRepairTower,
   onRepairAll,
   isMobile = false,
+  onFastForward,
   hudVisible = true,
   onCloseHud,
   hudRef,
@@ -1247,21 +1248,65 @@ export function HUD({
                 </button>
               </>
             )}
+
             {state === "wave" && (
-              <div
-                style={{
-                  textAlign: "center",
-                  padding: "8px",
-                  background: "#1a0f0a",
-                  border: "1px solid #f97316",
-                  borderRadius: 5,
-                  color: "#f97316",
-                  fontSize: 11,
-                }}
-              >
-                ⚔ WAVE {wave} — {enemyCount} active · {spawnRemaining} queued
+              <div style={{ display: "flex", gap: 5 }}>
+                <div
+                  style={{
+                    flex: 1,
+                    textAlign: "center",
+                    padding: "8px",
+                    background: "#1a0f0a",
+                    border: "1px solid #f97316",
+                    borderRadius: 5,
+                    color: "#f97316",
+                    fontSize: 11,
+                  }}
+                >
+                  ⚔ WAVE {wave} — {enemyCount} active · {spawnRemaining} queued
+                </div>
+                <button
+                  onClick={() => onFastForward?.()}
+                  title="Cycle speed: 1× → 2× → 4×"
+                  style={{
+                    padding: "6px 10px",
+                    background:
+                      gameState.speedMultiplier === 4
+                        ? "rgba(239,68,68,0.2)"
+                        : gameState.speedMultiplier === 2
+                          ? "rgba(251,191,36,0.15)"
+                          : "rgba(6,6,16,0.88)",
+                    border: `1px solid ${
+                      gameState.speedMultiplier === 4
+                        ? "#ef4444"
+                        : gameState.speedMultiplier === 2
+                          ? "#fbbf24"
+                          : "#334155"
+                    }`,
+                    borderRadius: 5,
+                    color:
+                      gameState.speedMultiplier === 4
+                        ? "#ef4444"
+                        : gameState.speedMultiplier === 2
+                          ? "#fbbf24"
+                          : "#64748b",
+                    fontFamily: mono,
+                    fontSize: 11,
+                    fontWeight: "bold",
+                    cursor: "pointer",
+                    minWidth: 44,
+                    flexShrink: 0,
+                  }}
+                >
+                  {gameState.speedMultiplier === 4
+                    ? "⏩4×"
+                    : gameState.speedMultiplier === 2
+                      ? "⏩2×"
+                      : "▶1×"}
+                </button>
               </div>
             )}
+
             {(state === "gameover" || state === "victory") && (
               <button
                 onClick={() => onReset(levelId)}

@@ -463,6 +463,11 @@ export default function App() {
     engineRef.current?.togglePause();
   }, []);
 
+  // ── Fast Forward ─────────────────────────────────────────────────────────────
+  const handleFastForward = useCallback(() => {
+    engineRef.current?.toggleFastForward();
+  }, []);
+
   // ── Cell coordinate helper ────────────────────────────────────────────────────
   const getCell = useCallback((e) => {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -478,6 +483,8 @@ export default function App() {
   const handleClick = useCallback(
     (e) => {
       showBottomBar();
+
+      engineRef.current?.audio?.init();
 
       if (!engineRef.current) return;
       if (gameState?.paused) return;
@@ -1460,6 +1467,43 @@ export default function App() {
                       >
                         {gameState.paused ? "▶ RESUME" : "⏸ PAUSE"}
                       </button>
+
+                      {/* Fast Forward */}
+                      <button
+                        onClick={handleFastForward}
+                        style={{
+                          padding: "5px 8px",
+                          background:
+                            gameState.speedMultiplier === 4
+                              ? "rgba(239,68,68,0.2)"
+                              : gameState.speedMultiplier === 2
+                                ? "rgba(251,191,36,0.15)"
+                                : "rgba(6,6,16,0.88)",
+                          border: `1px solid ${
+                            gameState.speedMultiplier === 4
+                              ? "#ef4444"
+                              : gameState.speedMultiplier === 2
+                                ? "#fbbf24"
+                                : "#334155"
+                          }`,
+                          borderRadius: 5,
+                          color:
+                            gameState.speedMultiplier === 4
+                              ? "#ef4444"
+                              : gameState.speedMultiplier === 2
+                                ? "#fbbf24"
+                                : "#64748b",
+                          fontFamily: mono,
+                          fontSize: 9,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {gameState.speedMultiplier === 4
+                          ? "⏩ 4×"
+                          : gameState.speedMultiplier === 2
+                            ? "⏩ 2×"
+                            : "▶ 1×"}
+                      </button>
                     </>
                   )}
 
@@ -1522,6 +1566,7 @@ export default function App() {
         onRepairTower={handleRepairTower}
         onRepairAll={handleRepairAll}
         isMobile={isMobile}
+        onFastForward={handleFastForward}
         hudVisible={isMobile ? hudVisible : true}
         onCloseHud={() => setHudVisible(false)}
         hudRef={hudRef}

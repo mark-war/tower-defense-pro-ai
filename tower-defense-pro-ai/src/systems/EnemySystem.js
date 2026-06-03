@@ -521,8 +521,17 @@ export class EnemySystem {
       if (e.burnTimer > 0) {
         e.burnTimer--;
         if (engine.tick % 20 === 0) {
-          const burnDmg = e.burnDmg * (e.burnStacks || 1);
-          e.hp -= burnDmg;
+          // Solar Core: burn ignores armor (true damage) and stacks cap 10
+          const maxStacks = e._burnTrueDamage ? 10 : 3;
+          const burnDmg = e.burnDmg * Math.min(e.burnStacks || 1, maxStacks);
+
+          if (e._burnTrueDamage) {
+            // True damage — bypass armor entirely
+            e.hp -= burnDmg;
+          } else {
+            e.hp -= burnDmg * (1 - Math.min(e.armor * 0.5, 0.5)); // half armor reduction
+          }
+
           // attribute burn XP to the inferno tower that applied it
           if (e.burnSourceId) {
             const burnTower = engine.towers.find(

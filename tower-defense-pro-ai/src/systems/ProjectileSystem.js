@@ -346,6 +346,54 @@ export class ProjectileSystem {
     tower._drawAngle =
       Math.atan2(target.y - tower.y, target.x - tower.x) + Math.PI / 2;
 
+    // ── Ascension: Extinction Protocol — every bullet applies all debuffs ─
+    if (tower.specials?.includes("extinctionProtocol")) {
+      const proj = engine.projectiles[engine.projectiles.length - 1];
+      if (proj) {
+        proj.slowDuration = 180;
+        proj.slowFactor = 0.1;
+        proj.burnDamage = tower.burnDamage || 5;
+        proj.burnDuration = 180;
+        proj.chainTargets = Math.max(proj.chainTargets, 3);
+        proj.armorPiercing = true;
+        if (!proj.specials.includes("stunOnHit"))
+          proj.specials.push("stunOnHit");
+        if (!proj.specials.includes("antiHeal")) proj.specials.push("antiHeal");
+      }
+    }
+
+    // ── Ascension: Doomsday Protocol — every missile shot = full nuke ─────
+    if (
+      tower.specials?.includes("doomsdayProtocol") &&
+      tower.type === "missile"
+    ) {
+      setTimeout(() => {
+        if (engine.state !== "wave") return;
+        for (const e of engine.enemies) {
+          engine.combatSystem.damageEnemy(e, tower.damage * damageMult * 3, {
+            towerType: "missile",
+            towerId: tower.id,
+            armorPiercing: true,
+            specials: [],
+          });
+        }
+        engine.audio?.playNuke();
+        engine.vfx.triggerShake(12, 20);
+        engine.vfx.addFloatingText(
+          engine.canvas.width / 2,
+          engine.canvas.height / 2 - 40,
+          "☢️ DOOMSDAY!",
+          "#f43f5e",
+        );
+        engine.vfx.addParticles(
+          engine.canvas.width / 2,
+          engine.canvas.height / 2,
+          "#f43f5e",
+          100,
+        );
+      }, 400);
+    }
+
     tower._recoilTimer = 8;
   }
 

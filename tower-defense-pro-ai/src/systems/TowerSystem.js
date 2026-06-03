@@ -140,7 +140,11 @@ export class TowerSystem {
     }
 
     // Cost scaling for legendaries
-    const scaleMap = { legendary50: 0.04, legendary100: 0.06 };
+    const scaleMap = {
+      legendary50: 0.04,
+      legendary100: 0.06,
+      ascension200: 0.08,
+    };
     let effectiveCost = costDef.cost;
     if (scaleMap[skillType]) {
       effectiveCost = Math.floor(
@@ -167,7 +171,6 @@ export class TowerSystem {
       (!tower.legendaryUnlocked || tower.legendary100Unlocked)
     )
       return false;
-
     if (
       skillType === "ascension200" &&
       (!tower.legendary100Unlocked || tower.ascension200Unlocked)
@@ -563,6 +566,8 @@ export class TowerSystem {
       skill10chosen: null,
       legendaryUnlocked: false,
       legendary100Unlocked: false,
+      ascension200Unlocked: false,
+      ascension200Path: null,
       upgradeReady: false,
       upgradeReadyType: null,
       specials: [],
@@ -580,8 +585,6 @@ export class TowerSystem {
       name: tDef.name,
       cost: tDef.cost,
       category: tDef.category,
-      ascension200Unlocked: false,
-      ascension200Path: null,
     };
   }
 
@@ -755,23 +758,6 @@ export class TowerSystem {
         }
       }
 
-      // zeusProtocol — Tesla hits ALL enemies, full damage
-      if (tower.specials?.includes("zeusProtocol")) {
-        const allEnemies = enemies.filter(
-          (e) =>
-            !(e.stealth && !globalReveal) && !e.immunities.includes("tesla"),
-        );
-        for (const e of allEnemies) {
-          engine.combatSystem.damageEnemy(e, tower.damage * damageMult, {
-            towerType: "tesla",
-            towerId: tower.id,
-            armorPiercing: true,
-            specials: tower.specials,
-          });
-          engine.vfx.addBolt(tower.x, tower.y, e.x, e.y, tower.color);
-        }
-      }
-
       const dmg = tower.damage * damageMult;
       inRange.forEach((e, idx) => {
         const chainDmg = idx === 0 ? dmg : dmg * 0.7;
@@ -849,20 +835,32 @@ export class TowerSystem {
       );
     }
 
-    // stormGod — passive 30 dmg/tick to all enemies
-    if (tower.specials?.includes("stormGod") && tick % 4 === 0) {
+    // ══════════════════════════════════════════════════════════════════════
+    // ASCENSION 200 SKILLS
+    // ══════════════════════════════════════════════════════════════════════
+
+    // ── Basic A: Extinction Protocol — every bullet applies all debuffs ───
+    // Handled in ProjectileSystem via proj.specials check — special is on tower
+    // and copied to projectile automatically via `specials: tower.specials`.
+
+    // ── Basic B: Void Arsenal — handled in ProjectileSystem (voidRings) ──
+    if (tower.specials?.includes("voidRings") && tick % 20 === 0) {
+      const ringRadius = 60 + (tick % 120);
       for (const e of enemies) {
-        if (e.immunities.includes("tesla")) continue;
-        engine.combatSystem.damageEnemy(e, 30 * damageMult, {
-          towerType: "tesla",
-          towerId: tower.id,
-          armorPiercing: true,
-          specials: [],
-        });
+        const d = Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2);
+        if (d < ringRadius && d > ringRadius - 20) {
+          engine.combatSystem.damageEnemy(e, tower.damage * 0.5, {
+            towerType: "basic",
+            towerId: tower.id,
+            armorPiercing: true,
+            specials: [],
+          });
+        }
       }
     }
 
-    // omniscience — Sniper hits all enemies every 5s
+    // ── Sniper A: executionShot — handled in CombatSystem.damageEnemy() ──
+    // ── Sniper B: Omniscience — hits ALL enemies every 5s ─────────────────
     if (
       tower.specials?.includes("omniscience") &&
       tick % 300 === 0 &&
@@ -878,15 +876,69 @@ export class TowerSystem {
         engine.vfx.addBolt(tower.x, tower.y, e.x, e.y, tower.color);
       }
       engine.vfx.addFloatingText(
-        tower.x,
-        tower.y - 30,
+        engine.canvas.width / 2,
+        engine.canvas.height / 2 - 50,
         "🌐 OMNISCIENCE!",
         "#38bdf8",
       );
       engine.vfx.triggerShake(4, 6);
     }
 
-    // solarGod — Laser permanent beam, true damage every 3 ticks
+    // ── Cannon A: Planet Cracker — every 3rd shot = nuke + burn zone ──────
+    if (tower.specials?.includes("planetCracker")) {
+      tower._shotCount = tower._shotCount || 0;
+      // shotCount is incremented in ProjectileSystem.fire() — we react here
+      if (
+        tower._shotCount > 0 &&
+        tower._shotCount % 3 === 0 &&
+        tower._lastPlanetCrack !== tower._shotCount
+      ) {
+        tower._lastPlanetCrack = tower._shotCount;
+        setTimeout(() => {
+          for (const e of engine.enemies) {
+            engine.combatSystem.damageEnemy(e, tower.damage * damageMult * 3, {
+              towerType: "cannon",
+              towerId: tower.id,
+              armorPiercing: true,
+              specials: [],
+            });
+          }
+          // Permanent burn zone at tower position
+          engine.burnZones.push({
+            x: tower.x,
+            y: tower.y,
+            radius: tower.splash * 1.5,
+            damage: tower.burnDamage || 8,
+            timer: 600,
+            color: "#ef4444",
+          });
+          engine.vfx.triggerShake(10, 16);
+          engine.vfx.addFloatingText(
+            engine.canvas.width / 2,
+            engine.canvas.height / 2 - 40,
+            "🌍 PLANET CRACKER!",
+            "#f97316",
+          );
+          engine.vfx.addParticles(tower.x, tower.y, "#f97316", 60);
+        }, 300);
+      }
+    }
+
+    // ── Cannon B: Tectonic — handled via proj.specials (splash + pull) ────
+    // statDelta splash:3.0 already applied at upgrade time.
+    // Pull is handled in dealSplashDamage when pullForce > 0 — add pull here:
+    if (tower.specials?.includes("tectonicPull") && tick % 30 === 0) {
+      for (const e of enemies) {
+        const d = Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2);
+        if (d <= tower.splash && !e.gravityImmune) {
+          const ang = Math.atan2(tower.y - e.y, tower.x - e.x);
+          e.x += Math.cos(ang) * 4;
+          e.y += Math.sin(ang) * 4;
+        }
+      }
+    }
+
+    // ── Laser A: Solar God — permanent true-dmg beam on every enemy ───────
     if (tower.specials?.includes("solarGod") && tick % 3 === 0) {
       for (const e of enemies) {
         engine.combatSystem.damageEnemy(e, tower.damage * damageMult, {
@@ -900,7 +952,180 @@ export class TowerSystem {
       }
     }
 
-    return false; // not fully handled — caller should continue with standard targeting
+    // ── Laser B: Mirror Web — beam reflects to 8 extra targets ───────────
+    // Handled in _fireLaser() — see addition below (prismSplit-like but 8 targets)
+
+    // ── Freeze A: Heat Death — all non-boss enemies permanently slowed ────
+    if (tower.specials?.includes("heatDeath") && tick % 30 === 0) {
+      for (const e of enemies) {
+        if (e.immunities.includes("freeze")) continue;
+        if (e.isBoss) {
+          // Bosses only get a slow, not a full freeze
+          e.slowTimer = Math.max(e.slowTimer, 60);
+        } else {
+          // Non-bosses get permanently frozen (re-applied every 0.5s)
+          e.stunTimer = Math.max(e.stunTimer, 35);
+        }
+      }
+    }
+
+    // ── Freeze B: Cryo Storm — frozen enemies explode on death ───────────
+    // Handled in CombatSystem.killEnemy() — see addition below.
+
+    // ── Tesla A: Zeus Protocol — chains to ALL enemies, full damage ───────
+    if (tower.specials?.includes("zeusProtocol") && tower.type === "tesla") {
+      // Override normal chain limit: already handled inside Tesla block above.
+      // We inject this BEFORE the tesla block so it intercepts and overrides.
+      const allTargets = enemies.filter(
+        (e) =>
+          !(e.stealth && !globalReveal) &&
+          !(
+            e.immunities.includes("tesla") &&
+            !tower.specials.includes("fullPierce")
+          ),
+      );
+      if (allTargets.length > 0 && tower.cooldown <= 0) {
+        tower.cooldown = Math.max(
+          1,
+          Math.round(tower.fireRate * fireRateMult * modFireRateMult),
+        );
+        const dmg = tower.damage * damageMult;
+        for (const e of allTargets) {
+          engine.combatSystem.damageEnemy(e, dmg, {
+            towerType: "tesla",
+            towerId: tower.id,
+            armorPiercing: true,
+            specials: tower.specials || [],
+          });
+          engine.vfx.addBolt(tower.x, tower.y, e.x, e.y, tower.color);
+        }
+        engine.vfx.addParticles(tower.x, tower.y, tower.color, 20);
+        return true; // skip normal tesla targeting
+      }
+    }
+
+    // ── Tesla B: Storm God — passive 30 dmg/tick to all enemies ──────────
+    if (tower.specials?.includes("stormGod") && tick % 4 === 0) {
+      for (const e of enemies) {
+        if (
+          e.immunities.includes("tesla") &&
+          !tower.specials.includes("fullPierce")
+        )
+          continue;
+        engine.combatSystem.damageEnemy(e, 30 * damageMult, {
+          towerType: "tesla",
+          towerId: tower.id,
+          armorPiercing: true,
+          specials: [],
+        });
+      }
+      if (tick % 60 === 0 && enemies.length > 0) {
+        engine.vfx.addParticles(tower.x, tower.y, tower.color, 8);
+      }
+    }
+
+    // ── Inferno A: Solar Core — burn becomes true dmg, stacks cap 10 ─────
+    // Handled in EnemySystem burn DoT block — see addition there.
+
+    // ── Inferno B: Infernal Realm — whole map is a burn zone ─────────────
+    if (tower.specials?.includes("infernalRealm") && tick % 60 === 0) {
+      for (const e of enemies) {
+        if (e.immunities.includes("inferno")) continue;
+        e.burnTimer = Math.max(e.burnTimer, 80);
+        e.burnDmg = Math.max(e.burnDmg, tower.burnDamage || 5);
+        e.burnSourceId = tower.id;
+      }
+      if (tick % 120 === 0) {
+        engine.vfx.addFloatingText(
+          engine.canvas.width / 2,
+          engine.canvas.height / 2 - 30,
+          "😈 INFERNAL REALM",
+          "#ef4444",
+        );
+      }
+    }
+
+    // ── Vortex A: Singularity Rex — permanent mega black hole ────────────
+    if (tower.specials?.includes("singularityRex")) {
+      // Ensure exactly one permanent black hole exists for this tower
+      if (!engine.blackHoles.some((bh) => bh._ownerId === tower.id)) {
+        engine.blackHoles.push({
+          x: tower.x,
+          y: tower.y,
+          timer: Infinity,
+          radius: tower.range * 1.5,
+          strength: 8,
+          _ownerId: tower.id,
+          _permanent: true,
+        });
+      }
+      // Heal the timer each tick so it never expires
+      const bh = engine.blackHoles.find((b) => b._ownerId === tower.id);
+      if (bh) {
+        bh.x = tower.x;
+        bh.y = tower.y;
+        bh.timer = 999999;
+        bh.radius = tower.range * 1.5;
+      }
+      // Extra damage every 20 ticks (beyond the base black hole tick damage)
+      if (tick % 20 === 0) {
+        for (const e of enemies) {
+          const d = Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2);
+          if (d <= tower.range * 1.5) {
+            engine.combatSystem.damageEnemy(e, 200 * damageMult, {
+              towerType: "vortex",
+              towerId: tower.id,
+              armorPiercing: true,
+              specials: [],
+            });
+          }
+        }
+      }
+    }
+
+    // ── Vortex B: Reality Fold — teleport all in range back to spawn every 6s
+    if (
+      tower.specials?.includes("realityFold") &&
+      tick % 360 === 0 &&
+      enemies.length > 0
+    ) {
+      let teleported = 0;
+      const now = engine.tick;
+      for (const e of enemies) {
+        const d = Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2);
+        if (d <= tower.range) {
+          // Same cooldown guard as teleportBack fix
+          const cooldown = e.isBoss ? 900 : 360;
+          if (e._realityFoldCooldown && now - e._realityFoldCooldown < cooldown)
+            continue;
+          e._realityFoldCooldown = now;
+          e.pathIndex = 0;
+          const activePath = e._altPath ?? engine.path;
+          e.x = activePath[0].x;
+          e.y = activePath[0].y;
+          e.distanceTraveled = 0;
+          teleported++;
+          engine.vfx.addParticles(e.x, e.y, "#818cf8", 15);
+        }
+      }
+      if (teleported > 0) {
+        engine.vfx.addFloatingText(
+          tower.x,
+          tower.y - 30,
+          `🌌 REALITY FOLD! ×${teleported}`,
+          "#818cf8",
+        );
+        engine.vfx.triggerShake(5, 8);
+      }
+    }
+
+    // ── Missile A: Doomsday Protocol — every missile triggers a nuke ─────
+    // Handled in ProjectileSystem.fire() via _shotCount — see addition below.
+
+    // ── Missile B: Hive Mind — each hit spawns 3 new homing missiles ─────
+    // Handled in CombatSystem.damageEnemy() via proj.specials check.
+
+    return false; // not fully handled — caller continues with standard targeting
   }
 
   _fireLaser(
@@ -989,6 +1214,30 @@ export class TowerSystem {
           specials: [],
         });
         engine.vfx.addBolt(tower.x, tower.y, pe.x, pe.y, "#e879f9");
+      }
+    }
+
+    // mirrorWeb — beam reflects off hit enemy to up to 8 additional targets
+    if (tower.specials?.includes("mirrorWeb") && targets.length > 0) {
+      const primary = targets[0];
+      const webTargets = enemies
+        .filter(
+          (e) =>
+            e.id !== primary.id &&
+            !e.immunities.includes("laser") &&
+            Math.sqrt((e.x - primary.x) ** 2 + (e.y - primary.y) ** 2) <=
+              modRange,
+        )
+        .sort((a, b) => b.distanceTraveled - a.distanceTraveled)
+        .slice(0, 8);
+      for (const wt of webTargets) {
+        engine.combatSystem.damageEnemy(wt, tower.damage * damageMult * 0.5, {
+          towerType: "laser",
+          towerId: tower.id,
+          armorPiercing: true,
+          specials: ["trueDamage"],
+        });
+        engine.vfx.addBolt(primary.x, primary.y, wt.x, wt.y, "#e879f9");
       }
     }
   }

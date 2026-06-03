@@ -45,16 +45,16 @@ export class CombatSystem {
       return;
     }
 
-    // executionShot — instant kill <40% HP; bosses take 4× dmg
+    let dmg = rawDmg;
+
+    // ── Ascension: executionShot — instant kill <40% HP; bosses take 4× dmg
     if (proj?.specials?.includes("executionShot")) {
       if (!enemy.isBoss && enemy.hp / enemy.maxHp <= 0.4) {
-        enemy.hp = 0;
+        enemy.hp = 0; // will be caught by the hp<=0 check below
       } else if (enemy.isBoss) {
         dmg *= 4;
       }
     }
-
-    let dmg = rawDmg;
 
     // Dark Star debuff
     if (enemy._darkStarDebuffTimer > 0) dmg *= 3;
@@ -213,6 +213,18 @@ export class CombatSystem {
     if (enemy.mutation?.apply?.mirrorShield && proj?.towerId)
       this._applyMirrorReflect(enemy, proj, dmg);
 
+    // Leech — enemy heals on dealing damage
+    if (enemy.mutation?.apply?.leech && proj?.towerId) {
+      const src = engine.towers.find((t) => t.id === proj.towerId);
+      if (src && src.hp < src.maxHp) {
+        enemy.hp = Math.min(
+          enemy.maxHp,
+          enemy.hp + enemy.maxHp * enemy.mutation.apply.leech,
+        );
+        engine.vfx.addParticles(enemy.x, enemy.y, "#4ade80", 4);
+      }
+    }
+
     // Gravity immune flag for vortex
     if (
       (enemy.gravityImmune || enemy.mutation?.apply?.gravityImmune) &&
@@ -348,6 +360,82 @@ export class CombatSystem {
     )
       this._spawnSeekerChain(enemy, proj);
 
+    // ── Ascension: Hive Mind — each missile hit spawns 3 new homing missiles
+    if (
+      proj?.specials?.includes("hiveMind") &&
+      proj?.towerType === "missile" &&
+      !proj._isHiveMind &&
+      (proj._hiveMindDepth || 0) < 2 // max 2 generations to prevent infinite cascade
+    ) {
+      const spawnCount = 3;
+      for (let hi = 0; hi < spawnCount; hi++) {
+        const nearbyTarget =
+          engine.enemies
+            .filter((e) => e.id !== enemy.id && !e.stealth)
+            .sort((a, b) => {
+              const da = (a.x - enemy.x) ** 2 + (a.y - enemy.y) ** 2;
+              const db = (b.x - enemy.x) ** 2 + (b.y - enemy.y) ** 2;
+              return da - db;
+            })[hi] || null;
+        if (!nearbyTarget) continue;
+        const dx = nearbyTarget.x - enemy.x;
+        const dy = nearbyTarget.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        engine.projectiles.push({
+          id: Date.now() + Math.random() + hi * 0.01,
+          x: enemy.x,
+          y: enemy.y,
+          vx: (dx / dist) * (proj.projectileSpeed || 4),
+          vy: (dy / dist) * (proj.projectileSpeed || 4),
+          damage: proj.damage * 0.4,
+          splash: proj.splash || 0,
+          color: proj.color,
+          size: proj.size || 4,
+          towerType: "missile",
+          towerId: proj.towerId,
+          armorPiercing: false,
+          projectileSpeed: proj.projectileSpeed || 4,
+          slowFactor: 0,
+          slowDuration: 0,
+          chainTargets: 0,
+          burnDamage: 0,
+          burnDuration: 0,
+          pullForce: 0,
+          homing: true,
+          targetId: nearbyTarget.id,
+          specials: ["hiveMind"],
+          _isHiveMind: true,
+          _hiveMindDepth: (proj._hiveMindDepth || 0) + 1,
+          hasShatterSyn: false,
+          piercedEnemies: new Set(),
+          maxTravelDist: 300,
+          travelDist: 0,
+        });
+      }
+      if (spawnCount > 0)
+        engine.vfx.addFloatingText(
+          enemy.x,
+          enemy.y - 16,
+          "🐝 HIVE MIND!",
+          "#f43f5e",
+        );
+    }
+
+    // ── Ascension: Solar Core — burn damage is true damage, stacks cap 10 ─
+    // Applied inline: override burnStacks cap and mark burn as true damage.
+    if (
+      proj?.specials?.includes("solarCore") ||
+      (proj?.towerId &&
+        engine.towers
+          .find((t) => t.id === proj.towerId)
+          ?.specials?.includes("solarCore"))
+    ) {
+      if (proj?.burnDamage && proj?.burnDuration) {
+        enemy.burnStacks = Math.min(10, (enemy.burnStacks || 0) + 1);
+        enemy._burnTrueDamage = true; // flag read in EnemySystem burn DoT
+      }
+    }
+
     if (enemy.hp <= 0) this.killEnemy(enemy, proj?.towerType, proj?.towerId);
   }
 
@@ -469,6 +557,9 @@ export class CombatSystem {
       this._spawnSplinters(enemy);
 
     // Ice Age — chill nearby enemies on kill (slow, not hard stun)
+    // Fixed: was perma-locking enemies at spawn by chaining hard stuns with no cooldown.
+    // Now uses slowTimer (enemies still move at 38% speed) + a per-enemy re-application
+    // cooldown so the same enemy can't be re-chilled until the current chill expires.
     if (
       engine.towers.some((t) => t.specials?.includes("iceAge")) &&
       !enemy.isBoss
@@ -481,14 +572,15 @@ export class CombatSystem {
         );
         if (d >= 120) continue;
 
-        // Per-enemy cooldown: 4s gap between re-applications
+        // Per-enemy cooldown: can only be re-chilled once the previous chill
+        // has fully expired (240 ticks = 4s gap between applications).
         if (other._iceAgeCooldown && now - other._iceAgeCooldown < 240)
           continue;
 
-        // Distance falloff: 2.5s inner / 1.25s outer
-        const slowDuration = d < 50 ? 150 : 75;
+        // Distance falloff: close enemies get a longer chill than far ones.
+        const slowDuration = d < 50 ? 150 : 75; // 2.5s inner / 1.25s outer
 
-        // slowTimer not stunTimer — enemies still crawl forward
+        // Apply as a SLOW (not a hard stun) so enemies still crawl forward.
         other.slowTimer = Math.max(other.slowTimer, slowDuration);
         other._iceAgeCooldown = now;
       }
@@ -496,20 +588,66 @@ export class CombatSystem {
     }
 
     // Death Ignite — Phoenix Core
+    // Fixed: was using hardcoded burnDmg=4 (meaningless at late waves) and never
+    // setting burnSourceId (so the inferno tower got zero XP for burn kills).
+    // Now uses the highest-burnDamage inferno tower in range so it scales with upgrades.
     if (
       engine.towers.some((t) => t.specials?.includes("deathIgnite")) &&
       !enemy.isBoss
     ) {
+      // Find the strongest inferno tower that has deathIgnite (for burn stat + XP credit)
+      const infernoTower = engine.towers
+        .filter((t) => t.specials?.includes("deathIgnite"))
+        .sort((a, b) => (b.burnDamage || 0) - (a.burnDamage || 0))[0];
+
+      const burnDmg = infernoTower?.burnDamage || 4;
+      const burnSourceId = infernoTower?.id || null;
+
       for (const other of engine.enemies) {
         const d = Math.sqrt(
           (other.x - enemy.x) ** 2 + (other.y - enemy.y) ** 2,
         );
         if (d < 60 && d > 0) {
           other.burnTimer = Math.max(other.burnTimer, 120);
-          other.burnDmg = Math.max(other.burnDmg, 4);
+          other.burnDmg = Math.max(other.burnDmg, burnDmg);
+          // Credit the inferno tower so it earns XP from burn kills
+          if (!other.burnSourceId) other.burnSourceId = burnSourceId;
         }
       }
       engine.vfx.addParticles(enemy.x, enemy.y, "#ef4444", 20);
+    }
+
+    // ── Ascension: Cryo Storm — frozen enemies explode on death ──────────
+    if (
+      engine.towers.some((t) => t.specials?.includes("cryoStorm")) &&
+      !enemy.isBoss &&
+      (enemy.stunTimer > 0 || enemy.slowTimer > 0)
+    ) {
+      const cryoTower = engine.towers
+        .filter((t) => t.specials?.includes("cryoStorm"))
+        .sort((a, b) => (b.damage || 0) - (a.damage || 0))[0];
+      const blastDmg = (cryoTower?.damage || 50) * 5;
+      for (const other of engine.enemies) {
+        const d = Math.sqrt(
+          (other.x - enemy.x) ** 2 + (other.y - enemy.y) ** 2,
+        );
+        if (d < 100 && d > 0 && !other.immunities.includes("freeze")) {
+          engine.combatSystem.damageEnemy(other, blastDmg, {
+            towerType: "freeze",
+            towerId: cryoTower?.id || null,
+            armorPiercing: true,
+            specials: [],
+          });
+          other.slowTimer = Math.max(other.slowTimer, 90);
+        }
+      }
+      engine.vfx.addParticles(enemy.x, enemy.y, "#a5f3fc", 30);
+      engine.vfx.addFloatingText(
+        enemy.x,
+        enemy.y - 16,
+        "💠 CRYO STORM!",
+        "#a5f3fc",
+      );
     }
 
     engine.enemies.splice(idx, 1);

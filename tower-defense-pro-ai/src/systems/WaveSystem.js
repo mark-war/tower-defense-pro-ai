@@ -269,8 +269,11 @@ export class WaveSystem {
 
     engine._waveStartTick = engine.tick;
     engine.nextWaveMessage = waveData.message;
-    if (this.wave >= 3 && waveData.message) {
-      this._aiTaunt = { text: waveData.message.slice(0, 72), life: 240 };
+    if (engine.wave >= 3 && waveData.message) {
+      engine._aiTauntQueue.push({
+        text: waveData.message.slice(0, 72),
+        life: 240,
+      });
     }
     engine.lastEnemyTypes = [...new Set(waveData.enemies.map((e) => e.type))];
     engine.minRequiredTowers = engine.waveAI.calcMinimumRequiredTowers(
@@ -344,6 +347,81 @@ export class WaveSystem {
     if (clearTime < engine.fastestWaveClear)
       engine.fastestWaveClear = clearTime;
 
+    // ── Wave clear rewards (always fires) ─────────────────────────────────────
+    engine.waveAI.recordWaveResults({
+      enemiesKilled: engine.waveKills,
+      enemiesLeaked: engine.waveLeaks,
+      damageByTower: { ...engine.waveDamageByTower },
+      goldSpent: engine.waveGoldSpent,
+      wave: engine.wave,
+    });
+
+    // Run stats
+    engine.runStats.totalLeaks += engine.waveLeaks;
+    if (engine.waveLeaks === 0) {
+      engine.runStats.wavesNoLeak = (engine.runStats.wavesNoLeak || 0) + 1;
+      engine._unlockAchievement("no_leak");
+    }
+
+    // Clear modifier
+    engine.activeModifier = null;
+    engine.silencedTowerType = null;
+    engine._eliteSpawnedCount = 0;
+
+    const bonus = ECFG.waveClearBonus + Math.sqrt(engine.wave) * 15;
+    engine.gold += bonus;
+    engine.runStats.goldEarned = (engine.runStats.goldEarned || 0) + bonus;
+    engine._addFloatingText(
+      engine.canvas.width / 2,
+      engine.canvas.height / 2,
+      `Wave ${engine.wave} Clear! +${Math.floor(bonus)}g`,
+      "#4ade80",
+    );
+
+    // ── Determine Wave Hero Tower (always fires) ──────────────────────────────
+    {
+      const byKills = [...engine.towers].sort(
+        (a, b) => (b._waveKillsThisWave || 0) - (a._waveKillsThisWave || 0),
+      )[0];
+      const byDamage = [...engine.towers].sort(
+        (a, b) =>
+          (engine.waveDamageByTower[b.type] || 0) -
+          (engine.waveDamageByTower[a.type] || 0),
+      )[0];
+
+      const heroKills = byKills?._waveKillsThisWave || 0;
+      const heroDmg = byDamage
+        ? engine.waveDamageByTower[byDamage.type] || 0
+        : 0;
+      const heroTower =
+        heroKills >= 3 ? byKills : heroDmg > 200 ? byDamage : null;
+
+      if (heroTower) {
+        const cDef = TOWER_TYPES[heroTower.type];
+        const statStr =
+          heroKills >= 3
+            ? `${heroKills} kills`
+            : `${Math.floor(heroDmg).toLocaleString()} dmg`;
+        engine.vfx.addFloatingText(
+          engine.canvas.width / 2,
+          engine.canvas.height / 2 - 42,
+          `${cDef?.icon || "🗼"} ${cDef?.name} MVP — ${statStr}`,
+          "#fbbf24",
+        );
+        engine.lastWaveHeroTower = {
+          type: heroTower.type,
+          name: cDef?.name || heroTower.type,
+          icon: cDef?.icon || "🗼",
+          kills: heroKills,
+          damage: Math.floor(heroDmg),
+          col: heroTower.col,
+          row: heroTower.row,
+        };
+      } else {
+        engine.lastWaveHeroTower = null;
+      }
+    }
+
     // Speed bonus — clear under 20 seconds = extra gold
     if (clearTime > 0 && clearTime < 20 && engine.wave > 2) {
       const speedBonus = Math.floor(Math.max(0, 20 - clearTime) * 2.5);
@@ -369,53 +447,24 @@ export class WaveSystem {
           );
         }
       }
-
-      engine.waveAI.recordWaveResults({
-        enemiesKilled: engine.waveKills,
-        enemiesLeaked: engine.waveLeaks,
-        damageByTower: { ...engine.waveDamageByTower },
-        goldSpent: engine.waveGoldSpent,
-        wave: engine.wave,
-      });
-
-      // Run stats
-      engine.runStats.totalLeaks += engine.waveLeaks;
-      if (engine.waveLeaks === 0) {
-        engine.runStats.wavesNoLeak = (engine.runStats.wavesNoLeak || 0) + 1;
-        engine._unlockAchievement("no_leak");
-      }
-
-      // Clear modifier
-      engine.activeModifier = null;
-      engine.silencedTowerType = null;
-      engine._eliteSpawnedCount = 0;
-
-      const bonus = ECFG.waveClearBonus + Math.sqrt(engine.wave) * 15;
-      engine.gold += bonus;
-      engine.runStats.goldEarned = (engine.runStats.goldEarned || 0) + bonus;
-      engine._addFloatingText(
-        engine.canvas.width / 2,
-        engine.canvas.height / 2,
-        `Wave ${engine.wave} Clear! +${Math.floor(bonus)}g`,
-        "#4ade80",
-      );
-      engine.minRequiredTowers = engine.waveAI.calcMinimumRequiredTowers(
-        engine.wave + 1,
-        engine.levelConfig,
-      );
-
-      // Check achievements
-      engine._checkAchievements();
-
-      if (!engine.isEndless && engine.wave >= engine.levelConfig.waves) {
-        engine.state = "victory";
-        engine.waveAI.finalizeGame(true);
-        engine.audio?.onVictory();
-        if (engine.lives === engine.levelConfig.startLives)
-          engine._unlockAchievement("perfect_run");
-      }
-      engine._emitState();
     }
+
+    engine.minRequiredTowers = engine.waveAI.calcMinimumRequiredTowers(
+      engine.wave + 1,
+      engine.levelConfig,
+    );
+
+    // Check achievements
+    engine._checkAchievements();
+
+    if (!engine.isEndless && engine.wave >= engine.levelConfig.waves) {
+      engine.state = "victory";
+      engine.waveAI.finalizeGame(true);
+      engine.audio?.onVictory();
+      if (engine.lives === engine.levelConfig.startLives)
+        engine._unlockAchievement("perfect_run");
+    }
+    engine._emitState();
   }
 
   grantWaveEndXp(budget) {
@@ -440,7 +489,7 @@ export class WaveSystem {
         } else if (tower.type === "vortex") {
           // XP for pulls executed this wave
           const pulls = Math.min(tower._wavePulls || 0, 80);
-          xp = pulls * 0.5;
+          xp = pulls * 0.75;
         }
       } else if (role === "tech") {
         if (tower.type === "laser") {

@@ -402,7 +402,10 @@ export function HUD({
         {/* Ability bar */}
         <div style={{ display: "flex", gap: 5 }}>
           {Object.entries(abilities).map(([key, ab]) => {
-            const ready = ab.cooldownLeft === 0 && state === "wave";
+            const ready =
+              ab.cooldownLeft === 0 &&
+              state === "wave" &&
+              wave >= (ab.unlocksAtWave != undefined ? ab.unlocksAtWave : 0);
             const pct = Math.max(0, 1 - ab.cooldownLeft / ab.cooldown);
             return (
               <button

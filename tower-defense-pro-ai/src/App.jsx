@@ -8,6 +8,7 @@ import {
   TOWER_TYPES,
   TOWER_UPGRADES,
   ENEMY_TYPES,
+  ADMIN_CONFIG,
 } from "./gameConstants.js";
 import MapSelectScreen from "./MapSelectScreen.jsx";
 
@@ -461,6 +462,21 @@ export default function App() {
   // ── Pause ─────────────────────────────────────────────────────────────────────
   const handlePause = useCallback(() => {
     engineRef.current?.togglePause();
+  }, []);
+
+  // ── Continue ─────────────────────────────────────────────────────────────
+  const handleContinue = useCallback(() => {
+    const success = engineRef.current?.useContinue();
+
+    if (!success) {
+      setSaveToast("Not enough gold to continue.");
+      setTimeout(() => setSaveToast(""), 2000);
+    }
+  }, []);
+
+  // ── Give Up ─────────────────────────────────────────────────────────────
+  const handleGiveUp = useCallback(() => {
+    engineRef.current?.forceGameOver?.();
   }, []);
 
   // ── Fast Forward ─────────────────────────────────────────────────────────────
@@ -984,6 +1000,152 @@ export default function App() {
                 }}
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gameState?.state === "continue_prompt" && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.85)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            style={{
+              width: 420,
+              maxWidth: "90%",
+              background: "#0d1117",
+              border: "2px solid #fbbf24",
+              borderRadius: 10,
+              padding: 24,
+              fontFamily: mono,
+              textAlign: "center",
+              color: "#e2e8f0",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 32,
+                marginBottom: 10,
+              }}
+            >
+              💀
+            </div>
+
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: "bold",
+                color: "#fbbf24",
+                marginBottom: 12,
+              }}
+            >
+              Continue?
+            </div>
+
+            <div
+              style={{
+                fontSize: 13,
+                color: "#94a3b8",
+                lineHeight: 1.6,
+                marginBottom: 18,
+              }}
+            >
+              Your defenses have fallen.
+              <br />
+              Spend gold to re-enter the battle.
+            </div>
+
+            <div
+              style={{
+                background: "#111827",
+                border: "1px solid #334155",
+                borderRadius: 8,
+                padding: 12,
+                marginBottom: 18,
+              }}
+            >
+              <div style={{ marginBottom: 6 }}>
+                Cost:{" "}
+                <strong style={{ color: "#facc15" }}>
+                  {gameState.continueGoldCost} Gold
+                </strong>
+              </div>
+
+              <div style={{ marginBottom: 6 }}>
+                Lives Restored:{" "}
+                <strong style={{ color: "#4ade80" }}>
+                  {gameState.livesOnContinue ??
+                    ADMIN_CONFIG.continueSystem.livesOnContinue}
+                </strong>
+              </div>
+
+              <div>
+                Continues Remaining:{" "}
+                <strong style={{ color: "#38bdf8" }}>
+                  {ADMIN_CONFIG.continueSystem.maxContinues -
+                    (gameState.continueCount || 0)}
+                </strong>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "center",
+              }}
+            >
+              <button
+                onClick={handleContinue}
+                disabled={gameState.gold < gameState.continueGoldCost}
+                style={{
+                  padding: "10px 20px",
+                  background:
+                    gameState.gold >= gameState.continueGoldCost
+                      ? "#0f2a0f"
+                      : "#1e293b",
+                  border: `1px solid ${
+                    gameState.gold >= gameState.continueGoldCost
+                      ? "#4ade80"
+                      : "#475569"
+                  }`,
+                  borderRadius: 6,
+                  color:
+                    gameState.gold >= gameState.continueGoldCost
+                      ? "#4ade80"
+                      : "#64748b",
+                  cursor:
+                    gameState.gold >= gameState.continueGoldCost
+                      ? "pointer"
+                      : "not-allowed",
+                  fontFamily: mono,
+                }}
+              >
+                Continue
+              </button>
+
+              <button
+                onClick={handleGiveUp}
+                style={{
+                  padding: "10px 20px",
+                  background: "#3a1a1a",
+                  border: "1px solid #ef4444",
+                  borderRadius: 6,
+                  color: "#ef4444",
+                  cursor: "pointer",
+                  fontFamily: mono,
+                }}
+              >
+                Give Up
               </button>
             </div>
           </div>

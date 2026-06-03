@@ -3,41 +3,33 @@ export const GRID_ROWS = 20;
 export const CELL_SIZE = 36;
 
 // ─── TOWER UPGRADES ───────────────────────────────────────────────────────────
-// XP THRESHOLD RULES (to prevent passive tier-skipping bug):
-//   - Each passive XP must be well below the NEXT skill gate
-//   - skill5.xp must be at least 30% above tier4 passive xp
-//   - skill10.xp must be at least 30% above tier9 passive xp
-//   - Tier 6 passive XP must be ABOVE skill5.xp (player picks skill5 first)
-//   - Tier 10 passive XP must be ABOVE skill10.xp
-// This ensures the break-per-call passive system gates correctly.
 export const TOWER_UPGRADES = {
   basic: {
     passives: [
-      { tier: 1, xp: 25, stat: "damage", mult: 0.12, label: "+12% dmg" },
-      { tier: 2, xp: 50, stat: "range", mult: 0.08, label: "+8% range" },
-      { tier: 3, xp: 100, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 1, xp: 20, stat: "damage", mult: 0.12, label: "+12% dmg" },
+      { tier: 2, xp: 40, stat: "range", mult: 0.08, label: "+8% range" },
+      { tier: 3, xp: 80, stat: "damage", mult: 0.18, label: "+18% dmg" },
       {
         tier: 4,
-        xp: 180,
+        xp: 140,
         stat: "fireRate",
         mult: -0.1,
         label: "−10% cooldown",
       },
-      // tier 5 = skill5 gate (xp: 500)
-      { tier: 6, xp: 280, stat: "damage", mult: 0.22, label: "+22% dmg" },
-      { tier: 7, xp: 320, stat: "range", mult: 0.12, label: "+12% range" },
-      { tier: 8, xp: 500, stat: "damage", mult: 0.28, label: "+28% dmg" },
+      // tier 5 = skill5 gate
+      { tier: 6, xp: 220, stat: "damage", mult: 0.22, label: "+22% dmg" },
+      { tier: 7, xp: 260, stat: "range", mult: 0.12, label: "+12% range" },
+      { tier: 8, xp: 400, stat: "damage", mult: 0.28, label: "+28% dmg" },
       {
         tier: 9,
-        xp: 600,
+        xp: 480,
         stat: "fireRate",
         mult: -0.15,
         label: "−15% cooldown",
       },
-      // tier 10 = skill10 gate (xp: 1750)
     ],
     skill5: {
-      xp: 220,
+      xp: 170,
       A: {
         name: "Marksman",
         desc: "+50% dmg, +15% range",
@@ -54,7 +46,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 800,
+      xp: 620,
       A: {
         name: "Deadeye",
         desc: "+100% dmg, armor pierce",
@@ -108,35 +100,52 @@ export const TOWER_UPGRADES = {
         special: "fullPierce",
       },
     },
+    // ── WAVE 200 ASCENSION ────────────────────────────────────────────────────
+    ascension200: {
+      unlocksAtWave: 200,
+      A: {
+        name: "Extinction Protocol",
+        desc: "Every bullet applies 3 stacks of every debuff simultaneously.",
+        icon: "☄️",
+        cost: 2000,
+        special: "extinctionProtocol",
+      },
+      B: {
+        name: "Void Arsenal",
+        desc: "+500% dmg. Shots create expanding void rings.",
+        icon: "🌀",
+        cost: 2000,
+        statDelta: { damage: 5.0 },
+        special: "voidRings",
+      },
+    },
   },
 
   sniper: {
     passives: [
-      { tier: 1, xp: 25, stat: "damage", mult: 0.15, label: "+15% dmg" },
-      { tier: 2, xp: 30, stat: "range", mult: 0.12, label: "+12% range" },
-      { tier: 3, xp: 75, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      { tier: 1, xp: 20, stat: "damage", mult: 0.15, label: "+15% dmg" },
+      { tier: 2, xp: 25, stat: "range", mult: 0.12, label: "+12% range" },
+      { tier: 3, xp: 60, stat: "damage", mult: 0.2, label: "+20% dmg" },
       {
         tier: 4,
-        xp: 140,
+        xp: 110,
         stat: "fireRate",
         mult: -0.1,
         label: "−10% cooldown",
       },
-      // tier 5 = skill5 gate (xp: 480)
-      { tier: 6, xp: 300, stat: "damage", mult: 0.28, label: "+28% dmg" },
-      { tier: 7, xp: 430, stat: "range", mult: 0.15, label: "+15% range" },
-      { tier: 8, xp: 540, stat: "damage", mult: 0.35, label: "+35% dmg" },
+      { tier: 6, xp: 240, stat: "damage", mult: 0.28, label: "+28% dmg" },
+      { tier: 7, xp: 340, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 8, xp: 430, stat: "damage", mult: 0.35, label: "+35% dmg" },
       {
         tier: 9,
-        xp: 600,
+        xp: 480,
         stat: "fireRate",
         mult: -0.12,
         label: "−12% cooldown",
       },
-      // tier 10 = skill10 gate (xp: 1700)
     ],
     skill5: {
-      xp: 180,
+      xp: 140,
       A: {
         name: "Longshot",
         desc: "+40% range, +30% dmg",
@@ -154,7 +163,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 680,
+      xp: 530,
       A: {
         name: "Rail Gun",
         desc: "+150% dmg, pass-through",
@@ -163,14 +172,6 @@ export const TOWER_UPGRADES = {
         statDelta: { damage: 1.5 },
         special: "pierceThrough",
       },
-      // B: {
-      //   name: "Quantum",
-      //   desc: "Ignores stealth + armor",
-      //   icon: "🌌",
-      //   cost: 150,
-      //   statDelta: { damage: 0.5 },
-      //   special: "fullPierce",
-      // },
       B: {
         name: "Hemorrhage",
         desc: "Shots apply anti-heal — target cannot regenerate for 6s",
@@ -215,35 +216,50 @@ export const TOWER_UPGRADES = {
         special: "timeStop",
       },
     },
+    ascension200: {
+      unlocksAtWave: 200,
+      A: {
+        name: "One Shot One Kill",
+        desc: "Every shot instantly kills enemies below 40% HP. Bosses take 4× dmg.",
+        icon: "💀",
+        cost: 2000,
+        special: "executionShot",
+      },
+      B: {
+        name: "Omniscience",
+        desc: "Infinite range. Hits all enemies on the map simultaneously every 5s.",
+        icon: "🌐",
+        cost: 2000,
+        special: "omniscience",
+      },
+    },
   },
 
   cannon: {
     passives: [
-      { tier: 1, xp: 30, stat: "damage", mult: 0.12, label: "+12% dmg" },
-      { tier: 2, xp: 60, stat: "splash", mult: 0.1, label: "+10% splash" },
-      { tier: 3, xp: 120, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 1, xp: 24, stat: "damage", mult: 0.12, label: "+12% dmg" },
+      { tier: 2, xp: 48, stat: "splash", mult: 0.1, label: "+10% splash" },
+      { tier: 3, xp: 95, stat: "damage", mult: 0.18, label: "+18% dmg" },
       {
         tier: 4,
-        xp: 180,
+        xp: 145,
         stat: "fireRate",
         mult: -0.1,
         label: "−10% cooldown",
       },
-      // tier 5 = skill5 gate (xp: 780)
-      { tier: 6, xp: 310, stat: "damage", mult: 0.22, label: "+22% dmg" },
-      { tier: 7, xp: 420, stat: "splash", mult: 0.2, label: "+20% splash" },
-      { tier: 8, xp: 550, stat: "damage", mult: 0.3, label: "+30% dmg" },
+      { tier: 6, xp: 250, stat: "damage", mult: 0.22, label: "+22% dmg" },
+      { tier: 7, xp: 335, stat: "splash", mult: 0.2, label: "+20% splash" },
+      { tier: 8, xp: 440, stat: "damage", mult: 0.3, label: "+30% dmg" },
       {
         tier: 9,
-        xp: 650,
+        xp: 520,
         stat: "fireRate",
         mult: -0.15,
         label: "−15% cooldown",
       },
-      // tier 10 = skill10 gate (xp: 2700)
     ],
     skill5: {
-      xp: 250,
+      xp: 185,
       A: {
         name: "Bombard",
         desc: "+60% splash radius",
@@ -260,7 +276,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 780,
+      xp: 620,
       A: {
         name: "Napalm",
         desc: "Splash leaves burning ground",
@@ -313,35 +329,51 @@ export const TOWER_UPGRADES = {
         special: "meteorStorm",
       },
     },
+    ascension200: {
+      unlocksAtWave: 200,
+      A: {
+        name: "Planet Cracker",
+        desc: "Every 3rd shot = screen nuke + leaves permanent burn zone.",
+        icon: "🌍",
+        cost: 2000,
+        special: "planetCracker",
+      },
+      B: {
+        name: "Tectonic",
+        desc: "+300% splash radius. Pulls all enemies toward impact point.",
+        icon: "🌋",
+        cost: 2000,
+        statDelta: { splash: 3.0 },
+        special: "tectonicPull",
+      },
+    },
   },
 
   laser: {
     passives: [
-      { tier: 1, xp: 30, stat: "damage", mult: 0.12, label: "+12% dmg" },
-      { tier: 2, xp: 65, stat: "range", mult: 0.1, label: "+10% range" },
-      { tier: 3, xp: 120, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 1, xp: 24, stat: "damage", mult: 0.12, label: "+12% dmg" },
+      { tier: 2, xp: 52, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 3, xp: 95, stat: "damage", mult: 0.18, label: "+18% dmg" },
       {
         tier: 4,
-        xp: 190,
+        xp: 150,
         stat: "fireRate",
         mult: -0.12,
         label: "−12% cooldown",
       },
-      // tier 5 = skill5 gate (xp: 2600)
-      { tier: 6, xp: 350, stat: "damage", mult: 0.25, label: "+25% dmg" },
-      { tier: 7, xp: 480, stat: "range", mult: 0.15, label: "+15% range" },
-      { tier: 8, xp: 620, stat: "damage", mult: 0.32, label: "+32% dmg" },
+      { tier: 6, xp: 280, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 385, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 8, xp: 495, stat: "damage", mult: 0.32, label: "+32% dmg" },
       {
         tier: 9,
-        xp: 780,
+        xp: 625,
         stat: "fireRate",
         mult: -0.15,
         label: "−15% cooldown",
       },
-      // tier 10 = skill10 gate (xp: 9500)
     ],
     skill5: {
-      xp: 240,
+      xp: 185,
       A: {
         name: "Overclock",
         desc: "2× fire rate, +20% dmg",
@@ -358,7 +390,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 950,
+      xp: 760,
       A: {
         name: "Death Ray",
         desc: "Hits ALL enemies in range",
@@ -412,47 +444,63 @@ export const TOWER_UPGRADES = {
         statDelta: { damage: 1.0 },
       },
     },
+    ascension200: {
+      unlocksAtWave: 200,
+      A: {
+        name: "Solar God",
+        desc: "Permanent beam hits every enemy on screen every tick. True damage.",
+        icon: "☀️",
+        cost: 2000,
+        special: "solarGod",
+      },
+      B: {
+        name: "Mirror Web",
+        desc: "Each beam reflects off enemies hitting up to 8 additional targets.",
+        icon: "🕸️",
+        cost: 2000,
+        statDelta: { damage: 0.8 },
+        special: "mirrorWeb",
+      },
+    },
   },
 
   freeze: {
     passives: [
       {
         tier: 1,
-        xp: 18,
+        xp: 15,
         stat: "slowDuration",
         mult: 0.12,
         label: "+12% slow dur",
       },
-      { tier: 2, xp: 38, stat: "damage", mult: 0.1, label: "+10% dmg" },
+      { tier: 2, xp: 30, stat: "damage", mult: 0.1, label: "+10% dmg" },
       {
         tier: 3,
-        xp: 72,
+        xp: 58,
         stat: "slowDuration",
         mult: 0.18,
         label: "+18% slow dur",
       },
-      { tier: 4, xp: 130, stat: "range", mult: 0.1, label: "+10% range" },
-      // tier 5 = skill5 gate (xp: 680)
+      { tier: 4, xp: 105, stat: "range", mult: 0.1, label: "+10% range" },
       {
         tier: 6,
-        xp: 240,
+        xp: 192,
         stat: "slowDuration",
         mult: 0.22,
         label: "+22% slow dur",
       },
-      { tier: 7, xp: 340, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      { tier: 7, xp: 272, stat: "damage", mult: 0.2, label: "+20% dmg" },
       {
         tier: 8,
-        xp: 460,
+        xp: 368,
         stat: "slowDuration",
         mult: 0.28,
         label: "+28% slow dur",
       },
-      { tier: 9, xp: 580, stat: "range", mult: 0.15, label: "+15% range" },
-      // tier 10 = skill10 gate (xp: 2400)
+      { tier: 9, xp: 465, stat: "range", mult: 0.15, label: "+15% range" },
     ],
     skill5: {
-      xp: 200,
+      xp: 130,
       A: {
         name: "Deep Freeze",
         desc: "+50% slow duration",
@@ -469,7 +517,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 720,
+      xp: 575,
       A: {
         name: "Absolute",
         desc: "Freeze fully stops enemy",
@@ -520,29 +568,44 @@ export const TOWER_UPGRADES = {
         special: "globalSlow",
       },
     },
+    ascension200: {
+      unlocksAtWave: 200,
+      A: {
+        name: "Heat Death",
+        desc: "All enemies permanently frozen. Only boss-level HP can break free.",
+        icon: "🧊",
+        cost: 2000,
+        special: "heatDeath",
+      },
+      B: {
+        name: "Cryo Storm",
+        desc: "Frozen enemies shatter on death, dealing 500% dmg to nearby enemies.",
+        icon: "💠",
+        cost: 2000,
+        special: "cryoStorm",
+      },
+    },
   },
 
   tesla: {
     passives: [
-      { tier: 1, xp: 35, stat: "damage", mult: 0.15, label: "+15% dmg" },
-      { tier: 2, xp: 80, stat: "range", mult: 0.1, label: "+10% range" },
-      { tier: 3, xp: 150, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      { tier: 1, xp: 28, stat: "damage", mult: 0.15, label: "+15% dmg" },
+      { tier: 2, xp: 64, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 3, xp: 120, stat: "damage", mult: 0.2, label: "+20% dmg" },
       {
         tier: 4,
-        xp: 280,
+        xp: 225,
         stat: "fireRate",
         mult: -0.12,
         label: "−12% cooldown",
       },
-      // tier 5 = skill5 gate (xp: 1050)
-      { tier: 6, xp: 450, stat: "damage", mult: 0.25, label: "+25% dmg" },
-      { tier: 7, xp: 560, stat: "chainTargets", flat: 1, label: "+1 chain" },
-      { tier: 8, xp: 680, stat: "range", mult: 0.15, label: "+15% range" },
-      { tier: 9, xp: 780, stat: "damage", mult: 0.3, label: "+30% dmg" },
-      // tier 10 = skill10 gate (xp: 3700)
+      { tier: 6, xp: 360, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 450, stat: "chainTargets", flat: 1, label: "+1 chain" },
+      { tier: 8, xp: 545, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 9, xp: 625, stat: "damage", mult: 0.3, label: "+30% dmg" },
     ],
     skill5: {
-      xp: 360,
+      xp: 290,
       A: {
         name: "Conductor",
         desc: "+2 chain targets",
@@ -559,7 +622,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 980,
+      xp: 785,
       A: {
         name: "Storm",
         desc: "Chains to 8 targets",
@@ -578,21 +641,13 @@ export const TOWER_UPGRADES = {
     },
     legendary50: {
       unlocksAtWave: 50,
-      // A: {
-      //   name: "Godstorm",
-      //   desc: "Arcs pierce boss shields. +3 chains.",
-      //   icon: "☈",
-      //   cost: 400,
-      //   statDelta: { chainTargets: 3 },
-      //   special: "shieldPierce",
-      // },
       A: {
         name: "Godstorm",
         desc: "Arcs pierce ALL shields and immunities. Strips adaptive immunity on hit.",
         icon: "☈",
         cost: 400,
         statDelta: { chainTargets: 3 },
-        special: "immunityBreak", // ← upgraded from shieldPierce
+        special: "immunityBreak",
       },
       B: {
         name: "Ball Lightning",
@@ -620,35 +675,50 @@ export const TOWER_UPGRADES = {
         special: "fullPierce",
       },
     },
+    ascension200: {
+      unlocksAtWave: 200,
+      A: {
+        name: "Zeus Protocol",
+        desc: "Chains to ALL enemies on screen. Each arc deals full damage.",
+        icon: "⚡",
+        cost: 2000,
+        special: "zeusProtocol",
+      },
+      B: {
+        name: "Storm God",
+        desc: "Permanent storm field — all enemies take 30 damage/tick passively.",
+        icon: "🌩️",
+        cost: 2000,
+        special: "stormGod",
+      },
+    },
   },
 
   inferno: {
     passives: [
-      { tier: 1, xp: 35, stat: "burnDamage", flat: 1, label: "+1 burn/tick" },
-      { tier: 2, xp: 85, stat: "range", mult: 0.1, label: "+10% range" },
-      { tier: 3, xp: 160, stat: "burnDamage", flat: 2, label: "+2 burn/tick" },
+      { tier: 1, xp: 28, stat: "burnDamage", flat: 1, label: "+1 burn/tick" },
+      { tier: 2, xp: 68, stat: "range", mult: 0.1, label: "+10% range" },
+      { tier: 3, xp: 128, stat: "burnDamage", flat: 2, label: "+2 burn/tick" },
       {
         tier: 4,
-        xp: 260,
+        xp: 208,
         stat: "burnDuration",
         mult: 0.15,
         label: "+15% burn dur",
       },
-      // tier 5 = skill5 gate (xp: 620)
-      { tier: 6, xp: 460, stat: "burnDamage", flat: 3, label: "+3 burn/tick" },
-      { tier: 7, xp: 620, stat: "range", mult: 0.15, label: "+15% range" },
-      { tier: 8, xp: 810, stat: "burnDamage", flat: 4, label: "+4 burn/tick" },
+      { tier: 6, xp: 368, stat: "burnDamage", flat: 3, label: "+3 burn/tick" },
+      { tier: 7, xp: 495, stat: "range", mult: 0.15, label: "+15% range" },
+      { tier: 8, xp: 648, stat: "burnDamage", flat: 4, label: "+4 burn/tick" },
       {
         tier: 9,
-        xp: 980,
+        xp: 785,
         stat: "burnDuration",
         mult: 0.25,
         label: "+25% burn dur",
       },
-      // tier 10 = skill10 gate (xp: 2300)
     ],
     skill5: {
-      xp: 330,
+      xp: 265,
       A: {
         name: "Wildfire",
         desc: "+60% burn duration",
@@ -666,7 +736,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 1200,
+      xp: 960,
       A: {
         name: "Hellfire",
         desc: "Burn stacks 3×",
@@ -692,13 +762,6 @@ export const TOWER_UPGRADES = {
         cost: 400,
         special: "deathIgnite",
       },
-      // B: {
-      //   name: "Infernal Aura",
-      //   desc: "Passively burns all enemies in range.",
-      //   icon: "🔥",
-      //   cost: 400,
-      //   special: "burnAura",
-      // },
       B: {
         name: "Cremation",
         desc: "Enemies below 20% HP take 4× burn damage. Berserker stacks reset on kill.",
@@ -725,21 +788,39 @@ export const TOWER_UPGRADES = {
         special: "hellgate",
       },
     },
+    ascension200: {
+      unlocksAtWave: 200,
+      A: {
+        name: "Solar Core",
+        desc: "All burn damage becomes true damage. Burn stacks cap raised to 10×.",
+        icon: "🌞",
+        cost: 2000,
+        special: "solarCore",
+      },
+      B: {
+        name: "Infernal Realm",
+        desc: "Converts the entire map into burning ground. All enemies take continuous damage.",
+        icon: "😈",
+        cost: 2000,
+        special: "infernalRealm",
+      },
+    },
   },
 
+  // ── VORTEX: XP thresholds reduced ~25% across all tiers so it levels faster ──
   vortex: {
     passives: [
-      { tier: 1, xp: 35, stat: "pullForce", flat: 0.1, label: "+0.1 pull" },
-      { tier: 2, xp: 85, stat: "splash", mult: 0.1, label: "+10% splash" },
-      { tier: 3, xp: 160, stat: "damage", mult: 0.18, label: "+18% dmg" },
-      { tier: 4, xp: 260, stat: "pullForce", flat: 0.15, label: "+0.15 pull" },
-      { tier: 6, xp: 460, stat: "damage", mult: 0.25, label: "+25% dmg" },
-      { tier: 7, xp: 620, stat: "splash", mult: 0.2, label: "+20% splash" },
-      { tier: 8, xp: 810, stat: "damage", mult: 0.32, label: "+32% dmg" },
-      { tier: 9, xp: 980, stat: "pullForce", flat: 0.2, label: "+0.2 pull" },
+      { tier: 1, xp: 25, stat: "pullForce", flat: 0.1, label: "+0.1 pull" },
+      { tier: 2, xp: 55, stat: "splash", mult: 0.1, label: "+10% splash" },
+      { tier: 3, xp: 105, stat: "damage", mult: 0.18, label: "+18% dmg" },
+      { tier: 4, xp: 175, stat: "pullForce", flat: 0.15, label: "+0.15 pull" },
+      { tier: 6, xp: 310, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 415, stat: "splash", mult: 0.2, label: "+20% splash" },
+      { tier: 8, xp: 545, stat: "damage", mult: 0.32, label: "+32% dmg" },
+      { tier: 9, xp: 660, stat: "pullForce", flat: 0.2, label: "+0.2 pull" },
     ],
     skill5: {
-      xp: 330,
+      xp: 225,
       A: {
         name: "Singularity",
         desc: "+50% pull, +40% splash",
@@ -757,7 +838,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 1200,
+      xp: 860,
       A: {
         name: "Void Rift",
         desc: "Teleports enemies back 20%",
@@ -792,19 +873,12 @@ export const TOWER_UPGRADES = {
     },
     legendary100: {
       unlocksAtWave: 100,
-      // A: {
-      //   name: "Big Crunch",
-      //   desc: "Every 5th shot pulls ALL enemies on map.",
-      //   icon: "🌑",
-      //   cost: 800,
-      //   special: "bigCrunch",
-      // },
       A: {
         name: "Bulwark Field",
         desc: "Nearby towers take 40% less damage. Gravity-immune bosses pulled at half force.",
         icon: "🛡️",
         cost: 800,
-        special: "bulwarkField", // ← new special
+        special: "bulwarkField",
       },
       B: {
         name: "Omega Rift",
@@ -814,34 +888,50 @@ export const TOWER_UPGRADES = {
         special: "omegaRift",
       },
     },
+    ascension200: {
+      unlocksAtWave: 200,
+      A: {
+        name: "Singularity Rex",
+        desc: "Creates a permanent black hole that continuously pulls ALL enemies and deals 200 dmg/tick.",
+        icon: "⚫",
+        cost: 2000,
+        special: "singularityRex",
+      },
+      B: {
+        name: "Reality Fold",
+        desc: "Enemies in range are teleported back to spawn every 6 seconds.",
+        icon: "🌌",
+        cost: 2000,
+        special: "realityFold",
+      },
+    },
   },
 
   missile: {
     passives: [
-      { tier: 1, xp: 55, stat: "damage", mult: 0.15, label: "+15% dmg" },
-      { tier: 2, xp: 130, stat: "splash", mult: 0.12, label: "+12% splash" },
-      { tier: 3, xp: 240, stat: "damage", mult: 0.2, label: "+20% dmg" },
+      { tier: 1, xp: 44, stat: "damage", mult: 0.15, label: "+15% dmg" },
+      { tier: 2, xp: 104, stat: "splash", mult: 0.12, label: "+12% splash" },
+      { tier: 3, xp: 192, stat: "damage", mult: 0.2, label: "+20% dmg" },
       {
         tier: 4,
-        xp: 390,
+        xp: 312,
         stat: "fireRate",
         mult: -0.1,
         label: "−10% cooldown",
       },
-      // skill5 gate (xp: 550)
-      { tier: 6, xp: 700, stat: "damage", mult: 0.25, label: "+25% dmg" },
-      { tier: 7, xp: 900, stat: "splash", mult: 0.2, label: "+20% splash" },
-      { tier: 8, xp: 1150, stat: "damage", mult: 0.3, label: "+30% dmg" },
+      { tier: 6, xp: 560, stat: "damage", mult: 0.25, label: "+25% dmg" },
+      { tier: 7, xp: 720, stat: "splash", mult: 0.2, label: "+20% splash" },
+      { tier: 8, xp: 920, stat: "damage", mult: 0.3, label: "+30% dmg" },
       {
         tier: 9,
-        xp: 1400,
+        xp: 1120,
         stat: "fireRate",
         mult: -0.15,
         label: "−15% cooldown",
       },
     ],
     skill5: {
-      xp: 550,
+      xp: 440,
       A: {
         name: "Payload",
         desc: "+50% splash radius, +20% dmg",
@@ -859,7 +949,7 @@ export const TOWER_UPGRADES = {
       },
     },
     skill10: {
-      xp: 1600,
+      xp: 1280,
       A: {
         name: "Cluster Warhead",
         desc: "Missile splits into 4 mini-rockets on impact",
@@ -911,6 +1001,23 @@ export const TOWER_UPGRADES = {
         cost: 900,
         special: "fullPierce",
         statDelta: { damage: 0.8 },
+      },
+    },
+    ascension200: {
+      unlocksAtWave: 200,
+      A: {
+        name: "Doomsday Protocol",
+        desc: "Every missile triggers a full-screen nuke. Cooldown halved.",
+        icon: "☢️",
+        cost: 2000,
+        special: "doomsdayProtocol",
+      },
+      B: {
+        name: "Hive Mind",
+        desc: "Missiles multiply on hit — each explosion spawns 3 new homing missiles.",
+        icon: "🐝",
+        cost: 2000,
+        special: "hiveMind",
       },
     },
   },
@@ -1016,7 +1123,7 @@ export const TOWER_TYPES = {
     unlockedAtLevel: 2,
     weakAgainst: ["armored"],
     strongAgainst: ["fast", "swarm"],
-    damageType: "hybrid", // physical slow + magical cold
+    damageType: "hybrid",
     towerHp: 180,
     towerMaxHp: 180,
     attackDamageResist: 0,
@@ -1121,12 +1228,11 @@ export const TOWER_CATEGORY_CAPS = {
 };
 
 // ─── ENEMIES ──────────────────────────────────────────────────────────────────
-// Added `lore` and `tip` fields for the enemy inspect panel.
 export const ENEMY_TYPES = {
   basic: {
     name: "Grunt",
-    hp: 98,
-    speed: 1.2,
+    hp: 105,
+    speed: 1.25,
     reward: 10,
     color: "#ef4444",
     size: 10,
@@ -1145,9 +1251,9 @@ export const ENEMY_TYPES = {
   },
   fast: {
     name: "Raider",
-    hp: 62,
-    speed: 2.9,
-    reward: 15,
+    hp: 72,
+    speed: 3.1,
+    reward: 16,
     color: "#facc15",
     size: 8,
     armor: 0,
@@ -1246,7 +1352,6 @@ export const ENEMY_TYPES = {
     physicalResist: 0,
     magicalResist: 0,
   },
-
   healer: {
     name: "Healer",
     hp: 175,
@@ -1270,8 +1375,6 @@ export const ENEMY_TYPES = {
     healRate: 0.08,
     healInterval: 60,
   },
-
-  // ── BOSSES — Enhanced for more challenge ─────────────────────────────────
   boss_colossus: {
     name: "Colossus",
     hp: 4000,
@@ -1293,7 +1396,6 @@ export const ENEMY_TYPES = {
     phaseAt: 0.5,
     phaseBoost: { speed: 1.5, armorDelta: 0.18 },
     bossAbility: "enrage",
-    // Phase 2: spawns armored escorts periodically
     spawnsOnDamage: { type: "armored", every: 400, count: 2 },
     stunImmunityBase: 180,
     lootDrop: {
@@ -1389,15 +1491,12 @@ export const ENEMY_TYPES = {
     phaseAt: 0.45,
     phaseBoost: { speed: 0.45, armorDelta: -0.3 },
     bossAbility: "drain",
-    // Phase 2: becomes faster and armor melts (negative armorDelta = easier to kill)
     lootDrop: { type: "lives_restore", amount: 3, label: "❤️ +3 Lives" },
     attackDps: 18,
     attackRange: 58,
     physicalResist: 0.28,
     magicalResist: 0,
   },
-
-  // ── Wave 60+ enemies ──────────────────────────────────────────────────
   chrono_raider: {
     name: "Chrono Raider",
     hp: 95,
@@ -1419,7 +1518,6 @@ export const ENEMY_TYPES = {
     physicalResist: 0,
     magicalResist: 0.1,
   },
-
   phantom_swarm: {
     name: "Phantom Swarm",
     hp: 45,
@@ -1441,7 +1539,6 @@ export const ENEMY_TYPES = {
     physicalResist: 0,
     magicalResist: 0,
   },
-
   juggernaut: {
     name: "Juggernaut",
     hp: 520,
@@ -1463,7 +1560,6 @@ export const ENEMY_TYPES = {
     magicalResist: 0.15,
     stunImmunityBase: 999999,
   },
-
   void_carrier: {
     name: "Void Carrier",
     hp: 310,
@@ -1697,14 +1793,14 @@ export const LEVELS = [
   },
 ];
 
-// ─── ENDLESS MODE (DEFAULT) ───────────────────────────────────────────────────
+// ─── ENDLESS MODE ─────────────────────────────────────────────────────────────
 export const ENDLESS_CONFIG = {
   id: 99,
   name: "Endless Siege",
   xpMult: 1.0,
   isEndless: true,
-  startGold: 380,
-  startLives: 25,
+  startGold: 340,
+  startLives: 22,
   unlockedTowers: [
     "basic",
     "sniper",
@@ -1725,6 +1821,24 @@ export const ENDLESS_CONFIG = {
     30: { label: "Boss Escort", desc: "Bosses now arrive with armored guard" },
     40: { label: "Void Rifts", desc: "Stealth enemies appear in all waves" },
     50: { label: "Titan Protocol", desc: "Boss HP x2, double boss waves" },
+    75: { label: "Juggernaut Age", desc: "Juggernauts appear in every wave" },
+    100: { label: "Apex Tide", desc: "All enemies gain +50% all stats" },
+    150: {
+      label: "Void Storm",
+      desc: "Boss HP x3. Chrono Raiders every wave.",
+    },
+    200: {
+      label: "God Tier",
+      desc: "Enemy HP x5. Ascension upgrades unlocked.",
+    },
+    300: {
+      label: "Singularity",
+      desc: "Enemies evolve every 5 kills instead of 80.",
+    },
+    500: {
+      label: "Extinction Event",
+      desc: "Every 3rd wave is a double-boss modifier wave.",
+    },
   },
   bossSchedule: [
     "boss_colossus",
@@ -1740,7 +1854,7 @@ export const ABILITIES = {
     name: "Airstrike",
     icon: "✈️",
     desc: "Deals 500 damage to all enemies on screen",
-    cooldown: 900,
+    cooldown: 720, // was 900 — reduced so it's usable each boss wave
     cost: 0,
     color: "#ef4444",
   },
@@ -1748,7 +1862,7 @@ export const ABILITIES = {
     name: "EMP Blast",
     icon: "🌐",
     desc: "Stuns all enemies for 3 seconds",
-    cooldown: 720,
+    cooldown: 540, // was 720
     cost: 0,
     color: "#fbbf24",
   },
@@ -1756,9 +1870,29 @@ export const ABILITIES = {
     name: "Reinforce",
     icon: "🏰",
     desc: "All towers fire 2× faster for 8 seconds",
-    cooldown: 1200,
+    cooldown: 960, // was 1200
     cost: 0,
     color: "#4ade80",
+  },
+  // ── New ability: unlocks at wave 50 ──────────────────────────────────────
+  overload: {
+    name: "Overload",
+    icon: "⚡",
+    desc: "All towers deal 3× damage for 5 seconds. Unlocks wave 50+.",
+    cooldown: 1800,
+    cost: 0,
+    color: "#fbbf24",
+    unlocksAtWave: 50,
+  },
+  // ── New ability: unlocks at wave 100 ─────────────────────────────────────
+  mass_repair: {
+    name: "Mass Repair",
+    icon: "🔧",
+    desc: "Instantly fully repairs all towers and grants 8 seconds of invulnerability to towers. Wave 100+.",
+    cooldown: 2400,
+    cost: 0,
+    color: "#4ade80",
+    unlocksAtWave: 100,
   },
 };
 
@@ -1792,6 +1926,35 @@ export const SYNERGIES = {
     color: "#38bdf8",
     bonus: { sniperCritOnSlowed: 0.8 },
   },
+  // ── New synergies ─────────────────────────────────────────────────────────
+  tesla_missile: {
+    towers: ["tesla", "missile"],
+    name: "Guided Storm",
+    desc: "Missiles gain +40% damage vs stunned enemies",
+    color: "#f43f5e",
+    bonus: { missileDmgVsStunned: 0.4 },
+  },
+  vortex_inferno: {
+    towers: ["vortex", "inferno"],
+    name: "Vortex Flame",
+    desc: "Pulled enemies take 2× burn damage",
+    color: "#818cf8",
+    bonus: { burnDmgVsPulled: 2.0 },
+  },
+  vortex_cannon: {
+    towers: ["vortex", "cannon"],
+    name: "Gravity Bomb",
+    desc: "Cannon splash radius +30% on pulled enemies",
+    color: "#f97316",
+    bonus: { splashRadiusVsPulled: 0.3 },
+  },
+  laser_sniper: {
+    towers: ["laser", "sniper"],
+    name: "Marked Target",
+    desc: "Sniper deals +60% damage to enemies hit by laser in last 2s",
+    color: "#e879f9",
+    bonus: { sniperDmgVsLaserTagged: 0.6 },
+  },
 };
 
 // ─── ADMIN CONFIG ─────────────────────────────────────────────────────────────
@@ -1801,19 +1964,19 @@ export const ADMIN_CONFIG = {
     minWavesBeforeAdapt: 2,
     crossGameMemoryDecay: 0.82,
     maxExploitAttempts: 4,
-    bossHpScaling: 2.25,
+    bossHpScaling: 2.3,
     enemyHpPerWave: 0.09,
-    enemySpeedPerWave: 0.014,
-    endlessHpPerWave: 0.25,
-    endlessSpeedPerWave: 0.016,
-    lateGameExpScale: 1.2,
+    enemySpeedPerWave: 0.015,
+    endlessHpPerWave: 0.24,
+    endlessSpeedPerWave: 0.017,
+    lateGameExpScale: 1.22,
   },
   economy: {
-    waveClearBonus: 20,
-    waveClearBonusPerWave: 5,
+    waveClearBonus: 18,
+    waveClearBonusPerWave: 4,
     towerSellRatio: 0.6,
-    fortifyCostBase: 250,
-    fortifyCostPerPurchase: 400,
+    fortifyCostBase: 280,
+    fortifyCostPerPurchase: 450,
     maxFortifyLevel: 20,
   },
   visual: {
@@ -1821,9 +1984,19 @@ export const ADMIN_CONFIG = {
     bossWarningFrames: 200,
   },
   enemyEvolution: {
-    killThresholdPerType: 80, // kills of type X by tower Y before evolution
-    maxEvolutionsPerType: 2, // enemy type can evolve at most twice per run
-    evolutionNotifyFrames: 180, // how long evolution alert shows
+    killThresholdPerType: 80,
+    maxEvolutionsPerType: 2,
+    evolutionNotifyFrames: 180,
+  },
+  // ── CONTINUE SYSTEM ───────────────────────────────────────────────────────
+  // Controls the "Last Chance" continue feature.
+  // When lives hit 0, players can spend a continue (max 3 per run)
+  // instead of ending immediately.
+  continueSystem: {
+    maxContinues: 3, // total continues allowed per run
+    livesOnContinue: 5, // lives restored on each continue
+    goldCostBase: 150, // gold cost for first continue
+    goldCostPerUse: 150, // increases by this each subsequent use
   },
 };
 
@@ -1832,7 +2005,6 @@ export const STARTING_LIVES = 25;
 
 // ─── WAVE MODIFIERS ───────────────────────────────────────────────────────────
 export const WAVE_MODIFIERS = [
-  // ── Debuffs ──────────────────────────────────────────────────────────────
   {
     id: "armored_tide",
     name: "Armored Tide",
@@ -1893,8 +2065,6 @@ export const WAVE_MODIFIERS = [
     weight: 8,
     apply: { enemyRegenRate: 0.0018 },
   },
-
-  // ── Buffs ─────────────────────────────────────────────────────────────────
   {
     id: "gold_rush",
     name: "Gold Rush",
@@ -1925,8 +2095,6 @@ export const WAVE_MODIFIERS = [
     weight: 10,
     apply: { enemyArmorMelt: 0.65 },
   },
-
-  // ── Chaos ─────────────────────────────────────────────────────────────────
   {
     id: "double_time",
     name: "Double Time",
@@ -1966,6 +2134,27 @@ export const WAVE_MODIFIERS = [
     type: "chaos",
     weight: 12,
     apply: { dualFront: true },
+  },
+  // ── New late-game modifiers ───────────────────────────────────────────────
+  {
+    id: "xp_surge",
+    name: "XP Surge",
+    icon: "⭐",
+    color: "#fbbf24",
+    desc: "All towers gain 3× XP this wave",
+    type: "buff",
+    weight: 8,
+    apply: { towerXpMult: 3.0 },
+  },
+  {
+    id: "gold_fortress",
+    name: "Gold Fortress",
+    icon: "🏰",
+    color: "#facc15",
+    desc: "Earn 500g bonus if no tower takes damage this wave",
+    type: "buff",
+    weight: 6,
+    apply: { noDamageGoldBonus: 500 },
   },
 ];
 
@@ -2043,8 +2232,6 @@ export const BOSS_MUTATIONS = [
     maxWave: 80,
     apply: { immuneStunSlow: true },
   },
-
-  // ── Wave 50+ mutations ────────────────────────────────────────────────
   {
     id: "void_step",
     name: "Void Step",
@@ -2074,18 +2261,16 @@ export const BOSS_MUTATIONS = [
     minWave: 55,
     apply: { adaptiveImmunity: true, adaptiveInterval: 480 },
   },
-
-  // ── Wave 70+ mutations ────────────────────────────────────────────────
   {
     id: "mirror_shield",
     name: "Mirror Shield",
     icon: "🪞",
-    desc: "Reflects 15% of incoming damage back to nearest tower",
+    desc: "Reflects 10% of incoming damage back to nearest tower",
     minWave: 70,
     apply: {
-      mirrorShield: 0.08, // ← was 0.15
-      mirrorShieldCap: 15, // ← new: max damage per reflect
-      mirrorShieldCooldown: 180, // ← new: 3s between reflects per tower
+      mirrorShield: 0.1,
+      mirrorShieldCap: 15,
+      mirrorShieldCooldown: 180,
     },
   },
   {
@@ -2102,7 +2287,7 @@ export const BOSS_MUTATIONS = [
     icon: "🩸",
     desc: "Heals 3% max HP for each tower it damages",
     minWave: 75,
-    apply: { leech: 0.03 },
+    apply: { leech: 0.008 },
   },
   {
     id: "gravity_immune",
@@ -2118,7 +2303,7 @@ export const BOSS_MUTATIONS = [
     icon: "💉",
     desc: "Heals 3% HP/sec. Phase 2 doubles regen.",
     minWave: 75,
-    apply: { regenRate: 0.03, phase2RegenMult: 2 },
+    apply: { regenRate: 0.008, phase2RegenMult: 1.5 },
   },
   {
     id: "phantom_triple",
@@ -2160,10 +2345,7 @@ export const BOSS_MUTATIONS = [
 ];
 
 // ─── ENEMY EVOLUTION TABLE ────────────────────────────────────────────────────
-// When tower type kills enough of enemy type, that enemy evolves specifically
-// against that tower. Permanent within a run.
 export const ENEMY_EVOLUTIONS = {
-  // basic Grunt evolutions
   basic_vs_cannon: {
     id: "basic_vs_cannon",
     enemyType: "basic",
@@ -2182,7 +2364,6 @@ export const ENEMY_EVOLUTIONS = {
     desc: "Grunts gain +40% HP and 15% armor",
     apply: { hpMult: 1.4, armorBonus: 0.15 },
   },
-  // fast Raider evolutions
   fast_vs_freeze: {
     id: "fast_vs_freeze",
     enemyType: "fast",
@@ -2201,7 +2382,6 @@ export const ENEMY_EVOLUTIONS = {
     desc: "Raiders have 25% chance to dodge single-target shots",
     apply: { dodgeChance: 0.25 },
   },
-  // armored Tank evolutions
   armored_vs_tesla: {
     id: "armored_vs_tesla",
     enemyType: "armored",
@@ -2220,7 +2400,6 @@ export const ENEMY_EVOLUTIONS = {
     desc: "Tanks gain +0.25 armor — armor-pierce reduced 50%",
     apply: { armorBonus: 0.25, piercingResist: 0.5 },
   },
-  // swarm evolutions
   swarm_vs_cannon: {
     id: "swarm_vs_cannon",
     enemyType: "swarm",
@@ -2239,7 +2418,6 @@ export const ENEMY_EVOLUTIONS = {
     desc: "Swarms gain +60% HP",
     apply: { hpMult: 1.6 },
   },
-  // stealth Ghost evolutions
   stealth_vs_laser: {
     id: "stealth_vs_laser",
     enemyType: "stealth",
@@ -2258,7 +2436,6 @@ export const ENEMY_EVOLUTIONS = {
     desc: "Ghosts absorb tesla chains — stealth persists after hit",
     apply: { immunities: ["tesla"] },
   },
-  // spread Brood evolutions
   spread_vs_cannon: {
     id: "spread_vs_cannon",
     enemyType: "spread",
@@ -2268,8 +2445,6 @@ export const ENEMY_EVOLUTIONS = {
     desc: "Brood gains 0.35 armor — children also inherit armor",
     apply: { armorBonus: 0.35, childArmorBonus: 0.2 },
   },
-
-  // ── Fast Raider wave 70+ evolutions ──────────────────────────────────
   fast_vs_inferno: {
     id: "fast_vs_inferno",
     enemyType: "fast",
@@ -2288,8 +2463,6 @@ export const ENEMY_EVOLUTIONS = {
     desc: "Raiders immune to vortex pull. +15% speed.",
     apply: { gravityImmune: true, speedMult: 1.15 },
   },
-
-  // ── Juggernaut evolutions ─────────────────────────────────────────────
   juggernaut_vs_inferno: {
     id: "juggernaut_vs_inferno",
     enemyType: "juggernaut",
@@ -2308,8 +2481,6 @@ export const ENEMY_EVOLUTIONS = {
     desc: "Juggernauts gain +0.3 armor and heal 5% HP when hit by armor-pierce",
     apply: { armorBonus: 0.3, healOnPierce: 0.05 },
   },
-
-  // ── Chrono Raider evolutions ──────────────────────────────────────────
   chrono_vs_tesla: {
     id: "chrono_vs_tesla",
     enemyType: "chrono_raider",
@@ -2368,6 +2539,25 @@ export const ACHIEVEMENTS = {
     icon: "🏆",
     desc: "Reach wave 50",
   },
+  wave_100: {
+    id: "wave_100",
+    name: "Centurion",
+    icon: "🌟",
+    desc: "Reach wave 100",
+  },
+  wave_200: {
+    id: "wave_200",
+    name: "Ascendant",
+    icon: "✨",
+    desc: "Reach wave 200 — Ascension upgrades unlock",
+  },
+  wave_500: {
+    id: "wave_500",
+    name: "Godslayer",
+    icon: "☠️",
+    desc: "Reach wave 500. You are no longer human.",
+    secret: true,
+  },
   synergist: {
     id: "synergist",
     name: "Synergist",
@@ -2393,52 +2583,57 @@ export const ACHIEVEMENTS = {
     icon: "🧬",
     desc: "Kill a mutated boss",
   },
+  used_continue: {
+    id: "used_continue",
+    name: "Last Chance",
+    icon: "❤️",
+    desc: "Use a continue to survive",
+  },
+  max_continues: {
+    id: "max_continues",
+    name: "Never Give Up",
+    icon: "💪",
+    desc: "Use all 3 continues in a single run",
+    secret: true,
+  },
+  ascension_unlocked: {
+    id: "ascension_unlocked",
+    name: "Ascended",
+    icon: "🌌",
+    desc: "Unlock an Ascension upgrade on any tower",
+  },
 };
 
 // ─── DYNAMIC MAP GENERATOR ───────────────────────────────────────────────────
 export function generateDynamicMap({ cols = 30, rows = 20 }) {
   const MARGIN = 2;
-  // Divide into two non-overlapping zones
-  const topMax = Math.floor(rows * 0.35); // rows 2..7
-  const bottomMin = Math.floor(rows * 0.65); // rows 13..17
-
+  const topMax = Math.floor(rows * 0.35);
+  const bottomMin = Math.floor(rows * 0.65);
   const waypoints = [];
   let col = 0;
-  // Start somewhere in the middle third so first segment is visible
   let row = randomBetween(Math.floor(rows * 0.4), Math.floor(rows * 0.6));
   waypoints.push({ col: 0, row });
-
-  // Determine first vertical direction based on start position
   let goTop = row >= rows / 2;
-
   while (col < cols - 1) {
-    // ── Forward horizontal step ───────────────────────────────────────────
     const remaining = cols - 1 - col;
     const minStep = Math.min(6, remaining);
     const maxStep = Math.min(Math.max(7, Math.floor(remaining * 0.5)), 13);
     const step = randomBetween(minStep, maxStep);
     const nextCol = Math.min(col + step, cols - 1);
-
     waypoints.push({ col: nextCol, row });
     col = nextCol;
     if (col >= cols - 1) break;
-
-    // ── Vertical swing to opposite zone ──────────────────────────────────
     const zone = goTop
       ? { min: MARGIN, max: topMax }
       : { min: bottomMin, max: rows - 1 - MARGIN };
     const nextRow = randomBetween(zone.min, zone.max);
-
     waypoints.push({ col, row: nextRow });
     row = nextRow;
     goTop = !goTop;
   }
-
-  // Guarantee exit on right edge
   if (waypoints[waypoints.length - 1].col < cols - 1) {
     waypoints.push({ col: cols - 1, row });
   }
-
   return {
     name: "Procedural Gauntlet",
     description: "A dynamically generated S-route. No two runs alike.",
@@ -2448,10 +2643,6 @@ export function generateDynamicMap({ cols = 30, rows = 20 }) {
     mapBonus: { type: "damage", value: 0.08, label: "⚔️ +8% tower damage" },
   };
 }
-
-// ---------------------
-// Helpers
-// ---------------------
 
 function randomBetween(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -2484,7 +2675,6 @@ function randomMapTheme() {
       accent: "#e879f9",
     },
   ];
-
   return themes[Math.floor(Math.random() * themes.length)];
 }
 
@@ -2501,10 +2691,9 @@ export const SKINS = {
   neon: {
     id: "neon",
     name: "Neon City",
-    unlocked: false, // unlock via achievement/purchase
+    unlocked: false,
     mapStyle: "neon",
     maps: {
-      // Override map theme colors
       valley: {
         path: "#0a0a2e",
         bg: "#050510",
@@ -2519,7 +2708,6 @@ export const SKINS = {
       },
     },
     towers: {
-      // Override tower draw colors — _drawTowerShape reads tower.skinColor
       basic: { color: "#00ffff", projectileColor: "#00ffff" },
       sniper: { color: "#ff00ff", projectileColor: "#ff00ff" },
       cannon: { color: "#ffff00", projectileColor: "#ffff00" },
@@ -2531,7 +2719,6 @@ export const SKINS = {
       missile: { color: "#ff6600", projectileColor: "#ff6600" },
     },
     enemies: {
-      // Override enemy colors
       basic: { color: "#ff0066" },
       fast: { color: "#ffff00" },
       armored: { color: "#00ffff" },
@@ -2556,10 +2743,7 @@ export const SKINS = {
       sniper: { color: "#5c4033", projectileColor: "#8b6914" },
       cannon: { color: "#4a3728", projectileColor: "#8b6914" },
     },
-    enemies: {
-      basic: { color: "#8b0000" },
-      armored: { color: "#696969" },
-    },
+    enemies: { basic: { color: "#8b0000" }, armored: { color: "#696969" } },
   },
   jungle: {
     id: "jungle",

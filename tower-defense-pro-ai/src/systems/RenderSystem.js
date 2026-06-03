@@ -834,6 +834,34 @@ export class RenderSystem {
         );
         ctx.textBaseline = "alphabetic";
       }
+
+      // ── GRAVITY LOCK EFFECT — add right here ────────────────────────────
+      if (enemy._gravityStrength > 0) {
+        ctx.save();
+        ctx.globalAlpha = enemy._gravityStrength * 0.5;
+        ctx.fillStyle = "#818cf8";
+        ctx.beginPath();
+        ctx.arc(enemy.x, enemy.y, enemy.size + 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        const orbitSpeed = (1 - enemy._gravityStrength) * 0.15 + 0.02;
+        for (let i = 0; i < 3; i++) {
+          const angle = engine.tick * orbitSpeed + i * ((Math.PI * 2) / 3);
+          ctx.globalAlpha = enemy._gravityStrength * 0.8;
+          ctx.fillStyle = "#c4b5fd";
+          ctx.beginPath();
+          ctx.arc(
+            enemy.x + Math.cos(angle) * (enemy.size + 8),
+            enemy.y + Math.sin(angle) * (enemy.size + 8),
+            2.5,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+      // ── END GRAVITY LOCK EFFECT ──────────────────────────────────────────
     }
 
     // ── PROJECTILES ───────────────────────────────────────────────────────────
@@ -973,12 +1001,18 @@ export class RenderSystem {
     ctx.fillText(waveLabel, 10, 15);
 
     // ── AI TAUNT OVERLAY ─────────────────────────────────────────────────────
-    if (this._aiTaunt && this._aiTaunt.life > 0) {
-      this._aiTaunt.life--;
+    if (!engine._aiTaunt || engine._aiTaunt.life <= 0) {
+      if (engine._aiTauntQueue?.length > 0) {
+        engine._aiTaunt = engine._aiTauntQueue.shift();
+      }
+    }
+
+    if (engine._aiTaunt && engine._aiTaunt.life > 0) {
+      engine._aiTaunt.life--;
       const tAlpha =
-        Math.min(1, this._aiTaunt.life / 40) *
-        Math.min(1, (240 - this._aiTaunt.life + 40) / 40);
-      const msgW = Math.min(this._aiTaunt.text.length * 6.2 + 32, W - 40);
+        Math.min(1, engine._aiTaunt.life / 40) *
+        Math.min(1, (240 - engine._aiTaunt.life + 40) / 40);
+      const msgW = Math.min(engine._aiTaunt.text.length * 6.2 + 32, W - 40);
       ctx.save();
       ctx.globalAlpha = tAlpha * 0.92;
       ctx.fillStyle = "rgba(8,0,18,0.85)";
@@ -990,7 +1024,7 @@ export class RenderSystem {
       ctx.font = "10px monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(`🧠 ${this._aiTaunt.text}`, W / 2, 45);
+      ctx.fillText(`🧠 ${engine._aiTaunt.text}`, W / 2, 45);
       ctx.restore();
     }
 

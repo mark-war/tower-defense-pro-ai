@@ -4,23 +4,47 @@
  */
 
 const KILL_XP = {
-  basic: 1.6, sniper: 2.6, cannon: 1.1, laser: 0.89,
-  freeze: 0.4, tesla: 1.4, inferno: 1.2, vortex: 0.3,
+  basic: 1.6,
+  sniper: 2.6,
+  cannon: 1.1,
+  laser: 0.89,
+  freeze: 0.7,
+  tesla: 1.4,
+  inferno: 1.2,
+  vortex: 1.0,
 };
 
 const BOSS_KILL_XP = {
-  basic: 12, sniper: 14, cannon: 11, laser: 8,
-  freeze: 6,  tesla: 10,  inferno: 11, vortex: 5,
+  basic: 12,
+  sniper: 14,
+  cannon: 11,
+  laser: 8,
+  freeze: 8,
+  tesla: 10,
+  inferno: 11,
+  vortex: 10,
 };
 
 const ASSIST_XP = {
-  basic: 0.4, sniper: 0.6, cannon: 0.3, laser: 0.3,
-  freeze: 0.5, tesla: 0.4, inferno: 0.3, vortex: 0.2,
+  basic: 0.4,
+  sniper: 0.6,
+  cannon: 0.3,
+  laser: 0.3,
+  freeze: 0.7,
+  tesla: 0.4,
+  inferno: 0.3,
+  vortex: 0.8,
 };
 
 const BOSS_ASSIST_XP = {
-  basic: 5, sniper: 5, cannon: 4, laser: 4,
-  freeze: 6, tesla: 5, inferno: 4, vortex: 3,
+  basic: 5,
+  sniper: 5,
+  cannon: 4,
+  laser: 4,
+  freeze: 7,
+  tesla: 5,
+  inferno: 4,
+  vortex: 7,
 };
 
 export function calcKillXp(tower, enemy) {

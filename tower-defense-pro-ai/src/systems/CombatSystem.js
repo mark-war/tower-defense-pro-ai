@@ -45,6 +45,15 @@ export class CombatSystem {
       return;
     }
 
+    // executionShot — instant kill <40% HP; bosses take 4× dmg
+    if (proj?.specials?.includes("executionShot")) {
+      if (!enemy.isBoss && enemy.hp / enemy.maxHp <= 0.4) {
+        enemy.hp = 0;
+      } else if (enemy.isBoss) {
+        dmg *= 4;
+      }
+    }
+
     let dmg = rawDmg;
 
     // Dark Star debuff
@@ -67,6 +76,33 @@ export class CombatSystem {
       if (isMagical) effectiveArmor *= 0.35;
       else if (isHybrid) effectiveArmor *= 0.6;
       dmg *= 1 - effectiveArmor;
+    }
+
+    // Synergy: tesla_missile — missiles deal +40% damage to stunned enemies
+    if (
+      proj?.towerType === "missile" &&
+      enemy.stunTimer > 0 &&
+      engine.activeSynergies.some((s) => s.key === "tesla_missile")
+    ) {
+      dmg *= 1.4;
+    }
+
+    // Synergy: laser_sniper — sniper deals +60% damage to enemies hit by laser recently
+    if (
+      proj?.towerType === "sniper" &&
+      enemy._laserTaggedTimer > 0 &&
+      engine.activeSynergies.some((s) => s.key === "laser_sniper")
+    ) {
+      dmg *= 1.6;
+    }
+
+    // Synergy: vortex_inferno — pulled enemies take 2x burn damage
+    if (
+      enemy._gravityStrength > 0.1 &&
+      proj?.burnDamage &&
+      engine.activeSynergies.some((s) => s.key === "vortex_inferno")
+    ) {
+      dmg *= 2.0;
     }
 
     // Execute: 4× burn below 20% HP
@@ -138,6 +174,9 @@ export class CombatSystem {
     // Track last hitter for adaptive immunity
     if (proj?.towerType) enemy._lastHitByTower = proj.towerType;
 
+    // Track laser tag for laser_sniper synergy (2 seconds = 120 ticks)
+    if (proj?.towerType === "laser") enemy._laserTaggedTimer = 120;
+
     // Immunity Break
     if (
       proj?.specials?.includes("immunityBreak") &&
@@ -174,18 +213,6 @@ export class CombatSystem {
     if (enemy.mutation?.apply?.mirrorShield && proj?.towerId)
       this._applyMirrorReflect(enemy, proj, dmg);
 
-    // Leech — enemy heals on dealing damage
-    if (enemy.mutation?.apply?.leech && proj?.towerId) {
-      const src = engine.towers.find((t) => t.id === proj.towerId);
-      if (src && src.hp < src.maxHp) {
-        enemy.hp = Math.min(
-          enemy.maxHp,
-          enemy.hp + enemy.maxHp * enemy.mutation.apply.leech,
-        );
-        engine.vfx.addParticles(enemy.x, enemy.y, "#4ade80", 4);
-      }
-    }
-
     // Gravity immune flag for vortex
     if (
       (enemy.gravityImmune || enemy.mutation?.apply?.gravityImmune) &&
@@ -195,18 +222,27 @@ export class CombatSystem {
 
     // Omega Rift
     if (proj?.specials?.includes("omegaRift")) {
-      const targetIdx = Math.floor(engine.path.length * 0.5);
-      if (enemy.pathIndex > targetIdx) {
-        enemy.pathIndex = targetIdx;
-        enemy.x = engine.path[targetIdx].x;
-        enemy.y = engine.path[targetIdx].y;
-        engine.vfx.addFloatingText(
-          enemy.x,
-          enemy.y - 20,
-          "🌌 RIFT!",
-          "#818cf8",
-        );
-        engine.vfx.addParticles(enemy.x, enemy.y, "#818cf8", 20);
+      const cooldown = enemy.isBoss ? 900 : 300;
+      const now = engine.tick;
+      if (
+        !enemy._omegaRiftCooldown ||
+        now - enemy._omegaRiftCooldown >= cooldown
+      ) {
+        enemy._omegaRiftCooldown = now;
+        const fraction = enemy.isBoss ? 0.7 : 0.5;
+        const targetIdx = Math.floor(engine.path.length * fraction);
+        if (enemy.pathIndex > targetIdx) {
+          enemy.pathIndex = targetIdx;
+          enemy.x = engine.path[targetIdx].x;
+          enemy.y = engine.path[targetIdx].y;
+          engine.vfx.addFloatingText(
+            enemy.x,
+            enemy.y - 20,
+            "🌌 RIFT!",
+            "#818cf8",
+          );
+          engine.vfx.addParticles(enemy.x, enemy.y, "#818cf8", 20);
+        }
       }
     }
 
@@ -432,17 +468,29 @@ export class CombatSystem {
     if (enemy.mutation?.apply?.splinterDeath && enemy.isBoss)
       this._spawnSplinters(enemy);
 
-    // Ice Age — freeze nearby on kill
+    // Ice Age — chill nearby enemies on kill (slow, not hard stun)
     if (
       engine.towers.some((t) => t.specials?.includes("iceAge")) &&
       !enemy.isBoss
     ) {
+      const now = engine.tick;
       for (const other of engine.enemies) {
+        if (other.immunities.includes("freeze")) continue;
         const d = Math.sqrt(
           (other.x - enemy.x) ** 2 + (other.y - enemy.y) ** 2,
         );
-        if (d < 100 && !other.immunities.includes("freeze"))
-          other.stunTimer = Math.max(other.stunTimer, 180);
+        if (d >= 120) continue;
+
+        // Per-enemy cooldown: 4s gap between re-applications
+        if (other._iceAgeCooldown && now - other._iceAgeCooldown < 240)
+          continue;
+
+        // Distance falloff: 2.5s inner / 1.25s outer
+        const slowDuration = d < 50 ? 150 : 75;
+
+        // slowTimer not stunTimer — enemies still crawl forward
+        other.slowTimer = Math.max(other.slowTimer, slowDuration);
+        other._iceAgeCooldown = now;
       }
       engine.vfx.addParticles(enemy.x, enemy.y, "#a5f3fc", 18);
     }
@@ -529,7 +577,12 @@ export class CombatSystem {
 
     const reflectPct = enemy.mutation.apply.mirrorShield;
     const reflectCap = enemy.mutation.apply.mirrorShieldCap || 15;
-    const reflectDmg = Math.min(dmg * reflectPct, reflectCap);
+    let reflectDmg = Math.min(dmg * reflectPct, reflectCap);
+
+    // Mass Repair Shield mutation blocks reflect damage
+    if (sourceTower._massRepairShield > 0) {
+      reflectDmg = 0;
+    }
 
     if (sourceTower.hp > sourceTower.maxHp * 0.15) {
       const actualReflect = reflectDmg * (1 - (sourceTower.damageResist || 0));

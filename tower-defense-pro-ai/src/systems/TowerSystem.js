@@ -168,6 +168,12 @@ export class TowerSystem {
     )
       return false;
 
+    if (
+      skillType === "ascension200" &&
+      (!tower.legendary100Unlocked || tower.ascension200Unlocked)
+    )
+      return false;
+
     if (engine.gold < effectiveCost) {
       engine.vfx.addFloatingText(
         tower.x,
@@ -206,6 +212,10 @@ export class TowerSystem {
     if (skillType === "legendary100") {
       tower.legendary100Unlocked = true;
       tower.legendary100Path = path;
+    }
+    if (skillType === "ascension200") {
+      tower.ascension200Unlocked = true;
+      tower.ascension200Path = path;
     }
 
     tower.upgradeReady = false;
@@ -326,7 +336,6 @@ export class TowerSystem {
       globalBuff,
       lastStandActive,
       activeModifier,
-      activeSynergies,
       boltEffects,
       tick,
     } = engine;
@@ -356,6 +365,9 @@ export class TowerSystem {
 
     const synergyTeslaReveal = engine.synergySystem.has("laser_tesla");
     const globalReveal = towers.some((t) => t.specials?.includes("allReveal"));
+    const synergyInfernoCannonActive =
+      engine.synergySystem.has("inferno_cannon");
+    const synergyVortexCannonActive = engine.synergySystem.has("vortex_cannon");
 
     for (const tower of towers) {
       if (tower.type === engine.silencedTowerType) continue;
@@ -402,11 +414,28 @@ export class TowerSystem {
         continue;
       }
 
-      engine.projectileSystem.fire(tower, target, damageMult);
+      // Synergy: inferno_cannon — cannon gains burnOnSplash
+      if (
+        synergyInfernoCannonActive &&
+        tower.type === "cannon" &&
+        !tower.specials.includes("burnOnSplash")
+      ) {
+        tower.specials.push("burnOnSplash");
+        engine.projectileSystem.fire(tower, target, damageMult);
+        tower.specials = tower.specials.filter((s) => s !== "burnOnSplash");
+      } else {
+        engine.projectileSystem.fire(tower, target, damageMult);
+      }
       tower.cooldown = Math.max(
         1,
         Math.round(tower.fireRate * fireRateMult * modFireRateMult),
       );
+
+      if (synergyVortexCannonActive && tower.type === "cannon") {
+        tower.specials.push("vortexOnHit");
+        engine.projectileSystem.fire(tower, target, damageMult);
+        tower.specials = tower.specials.filter((s) => s !== "vortexOnHit");
+      }
     }
 
     // Auto-repair during waves
@@ -420,6 +449,10 @@ export class TowerSystem {
     if (!upgDef) return;
 
     const wasReady = tower.upgradeReady;
+
+    // Keep xpToTier1/2 accurate for the HUD XP bars
+    if (upgDef.skill5?.xp) tower.xpToTier1 = upgDef.skill5.xp;
+    if (upgDef.skill10?.xp) tower.xpToTier2 = upgDef.skill10.xp;
 
     // Apply one passive tier per call
     for (const passive of upgDef.passives) {
@@ -442,6 +475,7 @@ export class TowerSystem {
     const s10 = upgDef.skill10;
     const l50 = upgDef.legendary50;
     const l100 = upgDef.legendary100;
+    const a200 = upgDef.ascension200;
 
     if (tower.passiveTier >= 4 && !tower.skill5chosen && tower.xp >= s5.xp) {
       tower.upgradeReady = true;
@@ -473,6 +507,15 @@ export class TowerSystem {
     ) {
       tower.upgradeReady = true;
       tower.upgradeReadyType = "legendary100";
+    }
+    if (
+      a200 &&
+      currentWave >= a200.unlocksAtWave &&
+      tower.legendary100Unlocked &&
+      !tower.ascension200Unlocked
+    ) {
+      tower.upgradeReady = true;
+      tower.upgradeReadyType = "ascension200";
     }
 
     if (!wasReady && tower.upgradeReady) this.engine._emitState();
@@ -512,8 +555,8 @@ export class TowerSystem {
       lastDamagedTick: 0,
       homing: tDef.homing || false,
       _shotCount: 0,
-      _recoilTimer: 0, 
-      _recoilMax: 8, 
+      _recoilTimer: 0,
+      _recoilMax: 8,
       xp: 0,
       passiveTier: 0,
       skill5chosen: null,
@@ -526,8 +569,8 @@ export class TowerSystem {
       tier: 0,
       chosenPath: null,
       tier2Path: null,
-      xpToTier1: 999,
-      xpToTier2: 999,
+      xpToTier1: TOWER_UPGRADES[type]?.skill5?.xp ?? 999,
+      xpToTier2: TOWER_UPGRADES[type]?.skill10?.xp ?? 999,
       baseDamage: tDef.damage,
       baseRange: tDef.range,
       baseFireRate: tDef.fireRate,
@@ -537,6 +580,8 @@ export class TowerSystem {
       name: tDef.name,
       cost: tDef.cost,
       category: tDef.category,
+      ascension200Unlocked: false,
+      ascension200Path: null,
     };
   }
 
@@ -544,10 +589,14 @@ export class TowerSystem {
     const upgDef = TOWER_UPGRADES[tower.type];
     if (!upgDef) return 0;
     let cost = 0;
-    if (tower.tier >= 1 && tower.chosenPath)
-      cost += upgDef.tier1[tower.chosenPath]?.cost || 0;
-    if (tower.tier >= 2 && tower.tier2Path)
-      cost += upgDef.tier2[tower.tier2Path]?.cost || 0;
+    if (tower.skill5chosen)
+      cost += upgDef.skill5?.[tower.skill5chosen]?.cost || 0;
+    if (tower.skill10chosen)
+      cost += upgDef.skill10?.[tower.skill10chosen]?.cost || 0;
+    if (tower.legendaryUnlocked && tower.legendary50Path)
+      cost += upgDef.legendary50?.[tower.legendary50Path]?.cost || 0;
+    if (tower.legendary100Unlocked && tower.legendary100Path)
+      cost += upgDef.legendary100?.[tower.legendary100Path]?.cost || 0;
     return cost;
   }
 
@@ -706,6 +755,23 @@ export class TowerSystem {
         }
       }
 
+      // zeusProtocol — Tesla hits ALL enemies, full damage
+      if (tower.specials?.includes("zeusProtocol")) {
+        const allEnemies = enemies.filter(
+          (e) =>
+            !(e.stealth && !globalReveal) && !e.immunities.includes("tesla"),
+        );
+        for (const e of allEnemies) {
+          engine.combatSystem.damageEnemy(e, tower.damage * damageMult, {
+            towerType: "tesla",
+            towerId: tower.id,
+            armorPiercing: true,
+            specials: tower.specials,
+          });
+          engine.vfx.addBolt(tower.x, tower.y, e.x, e.y, tower.color);
+        }
+      }
+
       const dmg = tower.damage * damageMult;
       inRange.forEach((e, idx) => {
         const chainDmg = idx === 0 ? dmg : dmg * 0.7;
@@ -783,6 +849,57 @@ export class TowerSystem {
       );
     }
 
+    // stormGod — passive 30 dmg/tick to all enemies
+    if (tower.specials?.includes("stormGod") && tick % 4 === 0) {
+      for (const e of enemies) {
+        if (e.immunities.includes("tesla")) continue;
+        engine.combatSystem.damageEnemy(e, 30 * damageMult, {
+          towerType: "tesla",
+          towerId: tower.id,
+          armorPiercing: true,
+          specials: [],
+        });
+      }
+    }
+
+    // omniscience — Sniper hits all enemies every 5s
+    if (
+      tower.specials?.includes("omniscience") &&
+      tick % 300 === 0 &&
+      enemies.length > 0
+    ) {
+      for (const e of enemies) {
+        engine.combatSystem.damageEnemy(e, tower.damage * damageMult, {
+          towerType: "sniper",
+          towerId: tower.id,
+          armorPiercing: true,
+          specials: tower.specials,
+        });
+        engine.vfx.addBolt(tower.x, tower.y, e.x, e.y, tower.color);
+      }
+      engine.vfx.addFloatingText(
+        tower.x,
+        tower.y - 30,
+        "🌐 OMNISCIENCE!",
+        "#38bdf8",
+      );
+      engine.vfx.triggerShake(4, 6);
+    }
+
+    // solarGod — Laser permanent beam, true damage every 3 ticks
+    if (tower.specials?.includes("solarGod") && tick % 3 === 0) {
+      for (const e of enemies) {
+        engine.combatSystem.damageEnemy(e, tower.damage * damageMult, {
+          towerType: "laser",
+          towerId: tower.id,
+          armorPiercing: true,
+          specials: ["trueDamage"],
+        });
+        if (tick % 30 === 0)
+          engine.vfx.addBolt(tower.x, tower.y, e.x, e.y, tower.color);
+      }
+    }
+
     return false; // not fully handled — caller should continue with standard targeting
   }
 
@@ -801,7 +918,7 @@ export class TowerSystem {
 
     const targets = enemies
       .filter((e) => {
-        if (e.immunities.includes("laser")) return false;
+        if (e.immunities.includes("laser") && !globalReveal) return false;
         return (
           Math.sqrt((e.x - tower.x) ** 2 + (e.y - tower.y) ** 2) <= modRange
         );
@@ -941,7 +1058,7 @@ export class TowerSystem {
     if (!candidates.length) return;
 
     const target = candidates[Math.floor(Math.random() * candidates.length)];
-    engine.combatSystem.damageEnemy(target, tower.damage * 0.6, {
+    engine.combatSystem.damageEnemy(target, tower.damage * damageMult * 0.6, {
       towerType: "cannon",
       towerId: tower.id,
       armorPiercing: false,
@@ -953,7 +1070,7 @@ export class TowerSystem {
         y: target.y,
         towerType: "cannon",
         towerId: tower.id,
-        damage: tower.damage * 0.4,
+        damage: tower.damage * damageMult * 0.4,
         splash: tower.splash * 0.5,
         pullForce: 0,
         specials: [],

@@ -28,6 +28,13 @@ export class AbilitySystem {
       case "reinforce":
         this._fireReinforce(ab);
         break;
+      case "overload":
+        this._overload(ab);
+        break;
+      case "massRepair":
+      case "mass_repair":
+        this._massRepair(ab);
+        break;
     }
 
     engine.audio?.playAbilityFire(abilityKey);
@@ -51,7 +58,7 @@ export class AbilitySystem {
 
   // ── Private ability implementations ────────────────────────────────────────
 
-  _fireAirstrike(ab) {
+  _fireAirstrike() {
     const engine = this.engine;
     let hits = 0;
     for (let i = engine.enemies.length - 1; i >= 0; i--) {
@@ -70,7 +77,7 @@ export class AbilitySystem {
     );
   }
 
-  _fireEMP(ab) {
+  _fireEMP() {
     const engine = this.engine;
     for (const e of engine.enemies) {
       e.slowTimer = 180;
@@ -89,7 +96,7 @@ export class AbilitySystem {
     );
   }
 
-  _fireReinforce(ab) {
+  _fireReinforce() {
     const engine = this.engine;
     engine.globalBuff = {
       fireRateMult: 0.5,
@@ -103,5 +110,30 @@ export class AbilitySystem {
       "🏰 REINFORCE!",
       "#4ade80",
     );
+  }
+
+  _overload() {
+    const engine = this.engine;
+    this.engine.globalBuff = {
+      fireRateMult: 1,
+      damageMult: 3,
+      timer: 300,
+      label: "⚡ OVERLOAD — 3× DMG!",
+    };
+    engine.vfx.addFloatingText(
+      engine.canvas.width / 2,
+      engine.canvas.height / 2,
+      "⚡ OVERLOAD!",
+      "#f59e0b",
+    );
+  }
+
+  _massRepair() {
+    const engine = this.engine;
+    for (const tower of engine.towers) {
+      tower.hp = tower.maxHp;
+      tower.disabled = false;
+      tower._massRepairShield = 480;
+    }
   }
 }

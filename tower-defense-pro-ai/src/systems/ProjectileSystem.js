@@ -108,8 +108,15 @@ export class ProjectileSystem {
     if (tower.specials?.includes("bigCrunch") && tower._shotCount % 10 === 0) {
       for (const e of engine.enemies) {
         if (e.isBoss) continue;
+        const now = engine.tick;
+        if (e._bigCrunchCooldown && now - e._bigCrunchCooldown < 240) continue;
+        e._bigCrunchCooldown = now;
         const activePath = e._altPath ?? engine.path;
-        const stepsBack = Math.min(6, e.pathIndex);
+        const maxSteps = Math.max(
+          1,
+          Math.min(3, Math.floor(6 / (1 + engine.wave * 0.05))),
+        );
+        const stepsBack = Math.min(maxSteps, e.pathIndex);
         if (stepsBack > 0) {
           e.pathIndex = Math.max(0, e.pathIndex - stepsBack);
           e.x = activePath[e.pathIndex].x;
@@ -374,6 +381,7 @@ export class ProjectileSystem {
             !p._isSeeker;
           target = engine.enemies
             .filter((e) => {
+              if (!e) return false;
               if (e.stealth && p.towerType !== "laser") return false;
               if (e.immunities.includes(p.towerType)) return false;
               if (p.piercedEnemies?.has(e.id)) return false;
@@ -423,6 +431,17 @@ export class ProjectileSystem {
       for (let j = engine.enemies.length - 1; j >= 0; j--) {
         const e = engine.enemies[j];
 
+        // defensive check since enemies can be removed mid-loop
+        if (!e) {
+          console.warn(
+            "Undefined enemy detected",
+            j,
+            engine.enemies.length,
+            engine.tick,
+          );
+          continue;
+        }
+
         const canHitStealth =
           p.towerType === "laser" ||
           p.specials?.includes("fullPierce") ||
@@ -462,15 +481,27 @@ export class ProjectileSystem {
                 this._chainLightning(e, p, p.chainTargets);
             }
             if (p.specials?.includes("teleportBack")) {
-              e.pathIndex = Math.max(0, Math.floor(engine.path.length * 0.2));
-              e.x = engine.path[e.pathIndex].x;
-              e.y = engine.path[e.pathIndex].y;
-              engine.vfx.addFloatingText(
-                e.x,
-                e.y - 20,
-                "TELEPORTED BACK!",
-                "#818cf8",
-              );
+              const shouldTeleport = e.isBoss
+                ? Math.random() < 0.05 // 5% chance for bosses
+                : Math.random() < 0.75; // 50% chance for non-bosses
+
+              const keepProgress = e.isBoss ? 0.75 : 0.25; // Bosses can only be teleported up to 25% back, non-bosses up to 75% back
+
+              if (shouldTeleport) {
+                e.pathIndex = Math.max(
+                  0,
+                  Math.floor(e.pathIndex * keepProgress),
+                );
+                e.x = engine.path[e.pathIndex].x;
+                e.y = engine.path[e.pathIndex].y;
+
+                engine.vfx.addFloatingText(
+                  e.x,
+                  e.y - 20,
+                  "TELEPORTED BACK!",
+                  "#818cf8",
+                );
+              }
             }
             break;
           }
@@ -501,12 +532,21 @@ export class ProjectileSystem {
       )
         continue;
 
+      // Synergy: vortex_cannon — extend splash radius by 30% for pulled enemies
+      const hasVortexCannon =
+        p.towerType === "cannon" &&
+        engine.activeSynergies.some((s) => s.key === "vortex_cannon");
+      const effectiveSplash =
+        hasVortexCannon && se._gravityStrength > 0.1
+          ? p.splash * 1.3
+          : p.splash;
+
       const sd = Math.sqrt((se.x - p.x) ** 2 + (se.y - p.y) ** 2);
-      if (sd < p.splash) {
+      if (sd < effectiveSplash) {
         let dmg =
           se.id === primaryEnemy.id
             ? p.damage
-            : p.damage * (1 - (sd / p.splash) * 0.5);
+            : p.damage * (1 - (sd / effectiveSplash) * 0.5);
 
         const hasShatterSyn = engine.activeSynergies.some(
           (s) => s.key === "freeze_cannon",
@@ -517,13 +557,13 @@ export class ProjectileSystem {
         engine.combatSystem.damageEnemy(se, dmg, p);
 
         if (p.pullForce > 0 && sd > 2) {
-          if (se._gravityImmune || se.gravityImmune) {
+          if (se._gravityImmune) {
             const hasBulwark = engine.towers.some(
               (t) =>
                 t.specials?.includes("bulwarkField") &&
                 Math.sqrt((t.x - p.x) ** 2 + (t.y - p.y) ** 2) <= t.range * 1.5,
             );
-            if (hasBulwark) {
+            if (hasBulwark && !se.gravityImmune) {
               const ang = Math.atan2(p.y - se.y, p.x - se.x);
               const effectivePull = p.pullForce * (1 - sd / p.splash);
               se.x += Math.cos(ang) * effectivePull * 0.5;
@@ -587,6 +627,7 @@ export class ProjectileSystem {
 
     const chainCandidates = engine.enemies
       .filter((e) => {
+        if (!e) return false;
         if (e.id === primaryEnemy.id) return false;
         if (e.immunities.includes(proj.towerType)) return false;
         if (e.stealth && proj.towerType !== "laser") return false;

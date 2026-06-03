@@ -550,6 +550,10 @@ export class GameEngine {
         this.towers.filter((t) => t.hp < t.maxHp).length *
         Math.ceil(50 * 0.008), // rough estimate shown in UI
       speedMultiplier: this.speedMultiplier,
+      continueGoldCost: this.continueGoldCost || 0,
+      continueCount: this.continueCount || 0,
+      livesOnContinue: ADMIN_CONFIG.continueSystem.livesOnContinue,
+      lastWaveHeroTower: this.lastWaveHeroTower || null,
     });
   }
 
@@ -639,5 +643,27 @@ export class GameEngine {
       }
     }
     return null;
+  }
+
+  useContinue() {
+    const cfg = ADMIN_CONFIG.continueSystem;
+    if (this.state !== "continue_prompt") return false;
+    if (this.gold < this.continueGoldCost) return false;
+    this.gold -= this.continueGoldCost;
+    this.lives = cfg.livesOnContinue;
+    this.continueCount++;
+    this.state = "wave"; // resume
+    this._checkLastStand();
+    this._unlockAchievement("used_continue");
+    if (this.continueCount >= cfg.maxContinues) {
+      this._unlockAchievement("max_continues");
+    }
+    this._emitState();
+    return true;
+  }
+
+  forceGameOver() {
+    this.state = "gameover";
+    this._emitState();
   }
 }

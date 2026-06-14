@@ -14,6 +14,7 @@ import {
   ENEMY_EVOLUTIONS,
 } from "./gameConstants.js";
 import { getGlobalMemory } from "./WaveAI.js";
+import { formatSpecialTags, getSkillStackHints } from "./skillRegistry.js";
 
 const mono = "'Courier New', monospace";
 
@@ -100,7 +101,6 @@ export function HUD({
     unlockedTowers = [],
     towerCaps = {},
     towerCatCounts = {},
-    activeSynergies = [],
     abilities = {},
     globalBuff,
     lastStandActive,
@@ -741,36 +741,76 @@ export function HUD({
             </div>
           )}
 
-          {/* Synergy badges */}
-          {activeSynergies.length > 0 && (
-            <div
-              style={{
-                padding: "6px 11px",
-                borderBottom: "1px solid #1e293b",
-                background: "#0a120a",
-              }}
-            >
+          {/* Synergy roster — active + almost-ready pairs */}
+          {(() => {
+            const ownedTypes = new Set(towers.map((t) => t.type));
+            const synergyRows = Object.entries(SYNERGIES).map(([key, syn]) => {
+              const hasA = ownedTypes.has(syn.towers[0]);
+              const hasB = ownedTypes.has(syn.towers[1]);
+              return { key, ...syn, hasA, hasB, active: hasA && hasB };
+            });
+            const showSynergies = synergyRows.some((s) => s.hasA || s.hasB);
+            if (!showSynergies) return null;
+            return (
               <div
                 style={{
-                  fontSize: 9,
-                  color: "#4ade80",
-                  letterSpacing: "0.1em",
-                  marginBottom: 3,
+                  padding: "6px 11px",
+                  borderBottom: "1px solid #1e293b",
+                  background: "#0a120a",
                 }}
               >
-                ✨ ACTIVE SYNERGIES
-              </div>
-              {activeSynergies.map((s) => (
                 <div
-                  key={s.key}
-                  style={{ fontSize: 10, color: "#86efac", marginBottom: 2 }}
+                  style={{
+                    fontSize: 9,
+                    color: "#4ade80",
+                    letterSpacing: "0.1em",
+                    marginBottom: 4,
+                  }}
                 >
-                  <span style={{ color: s.color, marginRight: 4 }}>●</span>
-                  {s.name}: {s.desc}
+                  ✨ TOWER SYNERGIES
                 </div>
-              ))}
-            </div>
-          )}
+                {synergyRows.map((s) => {
+                  if (!s.hasA && !s.hasB) return null;
+                  const status = s.active
+                    ? "ACTIVE"
+                    : `need ${!s.hasA ? TOWER_TYPES[s.towers[0]]?.name : TOWER_TYPES[s.towers[1]]?.name}`;
+                  return (
+                    <div
+                      key={s.key}
+                      style={{
+                        fontSize: 10,
+                        color: s.active ? "#86efac" : "#64748b",
+                        marginBottom: 3,
+                        opacity: s.active ? 1 : 0.75,
+                      }}
+                    >
+                      <span style={{ color: s.color, marginRight: 4 }}>●</span>
+                      <span
+                        style={{ fontWeight: s.active ? "bold" : "normal" }}
+                      >
+                        {s.name}
+                      </span>
+                      <span style={{ color: "#475569", marginLeft: 4 }}>
+                        ({status})
+                      </span>
+                      {s.active && (
+                        <div
+                          style={{
+                            fontSize: 9,
+                            color: "#6b7280",
+                            marginLeft: 12,
+                            marginTop: 1,
+                          }}
+                        >
+                          {s.desc}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* Tower list */}
           <div
@@ -2785,11 +2825,24 @@ function SkillBtn({
         <div style={{ fontSize: 9, color: "#6b7280", lineHeight: 1.4 }}>
           {skillDef.desc}
         </div>
-        {skillDef.special && (
+        {formatSpecialTags(skillDef).length > 0 && (
           <div style={{ fontSize: 8, color: "#818cf8", marginTop: 1 }}>
-            ✦ {skillDef.special}
+            ✦ {formatSpecialTags(skillDef).join(" · ")}
           </div>
         )}
+        {getSkillStackHints(skillDef).map((hint) => (
+          <div
+            key={hint}
+            style={{
+              fontSize: 8,
+              color: "#fbbf24",
+              marginTop: 2,
+              lineHeight: 1.3,
+            }}
+          >
+            ⚠ {hint}
+          </div>
+        ))}
       </div>
       {!taken && !locked && (
         <div
@@ -2821,7 +2874,8 @@ function UpgradePanel({ tower, onUpgrade, onRepairTower, gold, currentWave }) {
   const s5 = upgDef.skill5,
     s10 = upgDef.skill10;
   const l50 = upgDef.legendary50,
-    l100 = upgDef.legendary100;
+    l100 = upgDef.legendary100,
+    a200 = upgDef.ascension200;
 
   const l50ScaledCost = l50?.A?.cost
     ? Math.floor(l50.A.cost * (1 + currentWave * 0.04))
@@ -2832,6 +2886,11 @@ function UpgradePanel({ tower, onUpgrade, onRepairTower, gold, currentWave }) {
     ? Math.floor(l100.A.cost * (1 + currentWave * 0.06))
     : l100?.B?.cost
       ? Math.floor(l100.B.cost * (1 + currentWave * 0.06))
+      : 0;
+  const a200ScaledCost = a200?.A?.cost
+    ? Math.floor(a200.A.cost * (1 + currentWave * 0.08) + gold * 0.1)
+    : a200?.B?.cost
+      ? Math.floor(a200.B.cost * (1 + currentWave * 0.08) + gold * 0.1)
       : 0;
 
   return (
@@ -3173,6 +3232,55 @@ function UpgradePanel({ tower, onUpgrade, onRepairTower, gold, currentWave }) {
             onUpgrade={onUpgrade}
             tower={tower}
             scaledCost={l100ScaledCost}
+          />
+        </>
+      )}
+
+      {a200 && tower.legendary100Unlocked && (
+        <>
+          <div
+            style={{
+              fontSize: 9,
+              color: "#c084fc",
+              letterSpacing: "0.08em",
+              marginBottom: 5,
+              marginTop: 10,
+            }}
+          >
+            ☄ ASCENSION (wave {a200.unlocksAtWave}+){" "}
+            {currentWave < a200.unlocksAtWave
+              ? `(reach wave ${a200.unlocksAtWave})`
+              : tower.ascension200Unlocked
+                ? `✓ ${tower.ascension200Path === "A" ? a200.A?.name : a200.B?.name} chosen`
+                : "Choose one:"}
+          </div>
+          <SkillBtn
+            skillType="ascension200"
+            path="A"
+            skillDef={a200?.A}
+            locked={
+              currentWave < a200.unlocksAtWave ||
+              (tower.ascension200Unlocked && tower.ascension200Path !== "A")
+            }
+            taken={tower.ascension200Unlocked && tower.ascension200Path === "A"}
+            gold={gold}
+            onUpgrade={onUpgrade}
+            tower={tower}
+            scaledCost={a200ScaledCost}
+          />
+          <SkillBtn
+            skillType="ascension200"
+            path="B"
+            skillDef={a200?.B}
+            locked={
+              currentWave < a200.unlocksAtWave ||
+              (tower.ascension200Unlocked && tower.ascension200Path !== "B")
+            }
+            taken={tower.ascension200Unlocked && tower.ascension200Path === "B"}
+            gold={gold}
+            onUpgrade={onUpgrade}
+            tower={tower}
+            scaledCost={a200ScaledCost}
           />
         </>
       )}

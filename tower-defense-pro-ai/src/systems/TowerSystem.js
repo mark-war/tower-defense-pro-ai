@@ -20,6 +20,8 @@ import {
   ADMIN_CONFIG,
   SKINS,
 } from "../gameConstants.js";
+import { tickGlobalUniqueTowerEffects } from "../helpers/globalEffects.js";
+import { pickStrongestTowerWith } from "../skillRegistry.js";
 
 const ECFG = ADMIN_CONFIG.economy;
 const VCFG = ADMIN_CONFIG.visual;
@@ -191,10 +193,15 @@ export class TowerSystem {
     this._applyStatDeltas(tower, costDef.statDelta || {});
 
     if (costDef.special) {
-      tower.specials.push(costDef.special);
-      if (costDef.special === "splash30" && !tower.splash)
-        tower.splash = Math.max(tower.splash || 0, 30);
-      if (costDef.special === "armorPiercing") tower.armorPiercing = true;
+      const specs = Array.isArray(costDef.special)
+        ? costDef.special
+        : [costDef.special];
+      for (const sp of specs) {
+        if (!tower.specials.includes(sp)) tower.specials.push(sp);
+        if (sp === "splash30" && !tower.splash)
+          tower.splash = Math.max(tower.splash || 0, 30);
+        if (sp === "armorPiercing") tower.armorPiercing = true;
+      }
     }
 
     // Mark progression milestones
@@ -440,6 +447,13 @@ export class TowerSystem {
         tower.specials = tower.specials.filter((s) => s !== "vortexOnHit");
       }
     }
+
+    tickGlobalUniqueTowerEffects(engine, {
+      damageMult,
+      modFireRateMult,
+      fireRateMult,
+      globalReveal,
+    });
 
     // Auto-repair during waves
     if (engine.autoRepair && tick % 60 === 0) this._autoRepairTick();
@@ -690,6 +704,15 @@ export class TowerSystem {
 
     // ── Tesla ────────────────────────────────────────────────────────────────
     if (tower.type === "tesla") {
+      // Zeus Protocol is handled once globally (strongest tesla only).
+      if (
+        tower.specials?.includes("zeusProtocol") &&
+        pickStrongestTowerWith(engine.towers, "zeusProtocol", "damage")?.id ===
+          tower.id
+      ) {
+        return true;
+      }
+
       const canHitStealth =
         synergyTeslaReveal ||
         globalReveal ||

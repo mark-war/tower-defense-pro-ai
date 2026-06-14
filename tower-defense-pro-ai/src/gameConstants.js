@@ -562,7 +562,7 @@ export const TOWER_UPGRADES = {
       },
       B: {
         name: "Absolute Zero",
-        desc: "All enemies on map slowed permanently.",
+        desc: "Map-wide slow (does not stack — strongest freeze tower applies).",
         icon: "🌀",
         cost: 800,
         special: "globalSlow",
@@ -647,7 +647,7 @@ export const TOWER_UPGRADES = {
         icon: "☈",
         cost: 400,
         statDelta: { chainTargets: 3 },
-        special: "immunityBreak",
+        special: ["immunityBreak", "shieldPierce"],
       },
       B: {
         name: "Ball Lightning",
@@ -686,7 +686,7 @@ export const TOWER_UPGRADES = {
       },
       B: {
         name: "Storm God",
-        desc: "Permanent storm field — all enemies take 30 damage/tick passively.",
+        desc: "Map storm — 22 dmg/tick to all enemies (strongest tesla only).",
         icon: "🌩️",
         cost: 2000,
         special: "stormGod",
@@ -728,11 +728,11 @@ export const TOWER_UPGRADES = {
       },
       B: {
         name: "Floodfire",
-        desc: "+40% range, area ignite",
+        desc: "+40% range, area ignite + burn aura in range",
         icon: "🌋",
         cost: 120,
         statDelta: { range: 0.4 },
-        special: "areaIgnite",
+        special: ["areaIgnite", "burnAura"],
       },
     },
     skill10: {
@@ -882,17 +882,17 @@ export const TOWER_UPGRADES = {
       },
       B: {
         name: "Omega Rift",
-        desc: "Creates a rift teleporting enemies back 50%.",
+        desc: "Rift teleports enemies back 50%. Every 10th shot triggers Big Crunch.",
         icon: "🌌",
         cost: 800,
-        special: "omegaRift",
+        special: ["omegaRift", "bigCrunch"],
       },
     },
     ascension200: {
       unlocksAtWave: 200,
       A: {
         name: "Singularity Rex",
-        desc: "Creates a permanent black hole that continuously pulls ALL enemies and deals 200 dmg/tick.",
+        desc: "Creates a permanent black hole that continuously pulls ALL enemies and deals 130 dmg/tick.",
         icon: "⚫",
         cost: 2000,
         special: "singularityRex",
@@ -1853,7 +1853,7 @@ export const ABILITIES = {
   airstrike: {
     name: "Airstrike",
     icon: "✈️",
-    desc: "Deals 500 damage to all enemies on screen",
+    desc: "Deals heavy damage to all enemies (scales with wave)",
     cooldown: 720, // was 900 — reduced so it's usable each boss wave
     cost: 0,
     color: "#ef4444",
@@ -1878,7 +1878,7 @@ export const ABILITIES = {
   overload: {
     name: "Overload",
     icon: "⚡",
-    desc: "All towers deal 3× damage for 5 seconds. Unlocks wave 50+.",
+    desc: "All towers deal 2.5× damage for 5.5s. Unlocks wave 50+.",
     cooldown: 1800,
     cost: 0,
     color: "#fbbf24",
@@ -1964,12 +1964,12 @@ export const ADMIN_CONFIG = {
     minWavesBeforeAdapt: 2,
     crossGameMemoryDecay: 0.82,
     maxExploitAttempts: 4,
-    bossHpScaling: 2.3,
-    enemyHpPerWave: 0.09,
-    enemySpeedPerWave: 0.015,
-    endlessHpPerWave: 0.24,
-    endlessSpeedPerWave: 0.017,
-    lateGameExpScale: 1.22,
+    bossHpScaling: 2.05,
+    enemyHpPerWave: 0.085,
+    enemySpeedPerWave: 0.014,
+    endlessHpPerWave: 0.21,
+    endlessSpeedPerWave: 0.016,
+    lateGameExpScale: 1.17,
   },
   economy: {
     waveClearBonus: 18,
@@ -1997,6 +1997,44 @@ export const ADMIN_CONFIG = {
     livesOnContinue: 5, // lives restored on each continue
     goldCostBase: 150, // gold cost for first continue
     goldCostPerUse: 150, // increases by this each subsequent use
+  },
+  // ── HOTKEYS ───────────────────────────────────────────────────────────────
+  // Keyboard shortcuts. Values are KeyboardEvent.code strings.
+  // See: https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/code
+  hotkeys: {
+    // Wave control
+    startWave: "Enter", // Start next wave
+    pauseResume: "Space", // Pause / resume  (also "KeyP")
+    fastForward: "KeyF", // Cycle speed 1×→2×→4×
+
+    // Abilities
+    airstrike: "Digit1", // Fire Airstrike
+    emp: "Digit2", // Fire EMP
+    reinforce: "Digit3", // Fire Reinforce
+    overload: "Digit4", // Fire Overload
+    massRepair: "Digit5", // Fire Mass Repair
+
+    // Tower selection (number row via KeyQ…KeyM)
+    selectBasic: "KeyQ",
+    selectSniper: "KeyW",
+    selectCannon: "KeyE",
+    selectLaser: "KeyR",
+    selectFreeze: "KeyT",
+    selectTesla: "KeyY",
+    selectInferno: "KeyU",
+    selectVortex: "KeyI",
+    selectMissile: "KeyO",
+
+    // UI toggles
+    sellMode: "KeyX", // Toggle sell mode
+    tabBuild: "F1", // Switch to Build tab
+    tabUpgrade: "F2", // Switch to Upgrade tab
+    tabIntel: "F3", // Switch to Intel tab
+    tabLevels: "F4", // Switch to Levels tab
+
+    // Misc
+    save: "KeyS", // Quick save (also Ctrl+S)
+    fortify: "KeyV", // Fortify (between waves only)
   },
 };
 

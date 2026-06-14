@@ -445,6 +445,7 @@ export class AudioEngine {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = type;
+    freq = this._clampFreq(freq);
     osc.frequency.value = freq;
     gain.gain.setValueAtTime(volume, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
@@ -499,6 +500,7 @@ export class AudioEngine {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = type;
+    freq = this._clampFreq(freq);
     osc.frequency.value = freq;
     gain.gain.setValueAtTime(0.001, startTime);
     gain.gain.linearRampToValueAtTime(vol, startTime + 0.02);
@@ -725,7 +727,7 @@ export class AudioEngine {
     dist.curve = this._makeDistortionCurve(80);
     osc.type = "sine";
     osc.frequency.setValueAtTime(75, t);
-    osc.frequency.linearRampToValueAtTime(45, t + 0.3);
+    osc.frequency.linearRampToValueAtTime(Math.max(30, 45), t + 0.3);
     gain.gain.setValueAtTime(0.14, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
     osc.connect(dist);
@@ -1146,7 +1148,7 @@ export class AudioEngine {
       this._musicNodes.forEach((n) => {
         try {
           n.stop();
-        } catch (e) {
+        } catch {
           /* already stopped */
         }
       });
@@ -1207,7 +1209,8 @@ export class AudioEngine {
 
       // ── Arpeggio (8 steps per bar, cycles chord tones) ────────────────────
       for (let step = 0; step < 8; step++) {
-        const note = chord[step % chord.length] * 4;
+        let note = chord[step % chord.length] * (state === "boss" ? 3 : 4);
+        note = Math.max(80, Math.min(1800, note));
         const arpVol = state === "idle" ? 0.012 : 0.018;
         this._scheduleNote(
           note,
@@ -1220,7 +1223,8 @@ export class AudioEngine {
 
       // ── Melody line (wave + boss only, upper register) ────────────────────
       if (state !== "idle") {
-        const melNote = chord[bar % chord.length] * 8;
+        let melNote = chord[bar % chord.length] * (state === "boss" ? 5 : 6);
+        melNote = Math.max(200, Math.min(2400, melNote));
         const melVol = state === "boss" ? 0.025 : 0.018;
         this._scheduleNote(
           melNote,
@@ -1279,6 +1283,10 @@ export class AudioEngine {
       curve[i] = ((Math.PI + amount) * x) / (Math.PI + amount * Math.abs(x));
     }
     return curve;
+  }
+
+  _clampFreq(freq) {
+    return Math.max(20, Math.min(20000, freq)); // safe range
   }
 }
 

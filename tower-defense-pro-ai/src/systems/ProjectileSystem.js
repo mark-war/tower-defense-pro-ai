@@ -480,15 +480,7 @@ export class ProjectileSystem {
         const e = engine.enemies[j];
 
         // defensive check since enemies can be removed mid-loop
-        if (!e) {
-          console.warn(
-            "Undefined enemy detected",
-            j,
-            engine.enemies.length,
-            engine.tick,
-          );
-          continue;
-        }
+        if (!e) continue;
 
         const canHitStealth =
           p.towerType === "laser" ||
@@ -650,12 +642,19 @@ export class ProjectileSystem {
       }
     }
 
-    if (p.specials?.includes("burnOnSplash")) {
+    const hasInfernoCannon = engine.activeSynergies.some(
+      (s) => s.key === "inferno_cannon",
+    );
+    if (
+      p.specials?.includes("burnOnSplash") ||
+      (hasInfernoCannon && p.towerType === "cannon")
+    ) {
+      const infernoTower = engine.towers.find((t) => t.type === "inferno");
       engine.burnZones.push({
         x: p.x,
         y: p.y,
         radius: (p.splash || 65) * 0.7,
-        damage: 2,
+        damage: Math.max(2, infernoTower?.burnDamage || 2),
         timer: 180,
         color: "#ef4444",
       });

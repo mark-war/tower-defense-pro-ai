@@ -165,8 +165,6 @@ export class GameEngine {
 
     // Spawn camp at path entry
     this.spawnCamps = [new SpawnCamp(this.path[0].x, this.path[0].y, 0)];
-    console.log(this.path[0].x, this.path[0].y);
-    console.log(lastPt.x, lastPt.y);
 
     this.milestoneBonus = null; // ← persists across startWave() resets
     this.secondSpawnCamp = null; // ← dual-front camp reference
@@ -407,7 +405,7 @@ export class GameEngine {
 
   loadSaveState(save) {
     if (!save) return false;
-    console.log("🔄 Loading save with map:", save.savedMapKey);
+
     return this.saveSystem.loadSaveState(save);
   }
 
@@ -418,6 +416,9 @@ export class GameEngine {
       for (let _s = 0; _s < steps; _s++) {
         this.waveSystem.tickSpawning();
         this.enemySystem.update();
+        for (let _i = this.enemies.length - 1; _i >= 0; _i--) {
+          if (this.enemies[_i] === undefined) this.enemies.splice(_i, 1);
+        }
         this.towerSystem.update();
         this.projectileSystem.update();
         this.waveSystem.checkWaveComplete();

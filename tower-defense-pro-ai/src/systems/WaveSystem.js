@@ -12,6 +12,7 @@ import {
   BOSS_MUTATIONS,
   ADMIN_CONFIG,
 } from "../gameConstants.js";
+import { getEndlessWaveModifiers } from "../helpers/endlessMechanics.js";
 import { SpawnCamp } from "../SpawnCamp.js";
 import { RenderSystem } from "./RenderSystem.js";
 
@@ -37,6 +38,13 @@ export class WaveSystem {
     const engine = this.engine;
     if (engine.state !== "idle") return;
     engine.wave++;
+
+    engine.endlessWaveMods = engine.isEndless
+      ? getEndlessWaveModifiers(engine.wave)
+      : null;
+    if (engine.waveAI) {
+      engine.waveAI._endlessMods = engine.endlessWaveMods;
+    }
 
     engine.audio?.onWaveStart(engine.wave);
 
@@ -184,7 +192,7 @@ export class WaveSystem {
 
     // ── Boss check + warning ──────────────────────────────────────────────────
     const bossType = engine.isEndless
-      ? engine.waveAI._endlessBossForWave(engine.wave)
+      ? engine.waveAI._endlessBossForWave(engine.wave, engine.endlessWaveMods)
       : engine.levelConfig.bossWaves?.[engine.wave] || null;
 
     // Roll boss mutation (wave 30+)

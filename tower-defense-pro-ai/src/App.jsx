@@ -408,26 +408,147 @@ export default function App() {
     }
   }, [loadWarning]);
 
-  // ── Keyboard shortcuts ────────────────────────────────────────────────────────
+  // ── Keyboard shortcuts — driven by ADMIN_CONFIG.hotkeys ──────────────────────
+  // All tower-type → select mappings live here too so they hot-reload with config.
+  const TOWER_ORDER = [
+    "basic",
+    "sniper",
+    "cannon",
+    "laser",
+    "freeze",
+    "tesla",
+    "inferno",
+    "vortex",
+    "missile",
+  ];
   useEffect(() => {
+    const HK = ADMIN_CONFIG.hotkeys;
     const onKey = (e) => {
       const eng = engineRef.current;
       if (!eng) return;
+      // Never fire inside text inputs
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+
+      const { code, ctrlKey, metaKey } = e;
+
+      // ── Pause / resume (always Space or P as fallback) ────────────────────
       if (
-        (e.code === "Space" || e.code === "KeyP") &&
-        !["INPUT", "TEXTAREA"].includes(e.target.tagName)
+        code === HK.pauseResume ||
+        code === "KeyP" ||
+        (code === "Space" && !ctrlKey)
       ) {
         e.preventDefault();
         eng.togglePause();
+        return;
       }
-      if (e.code === "KeyS" && e.ctrlKey) {
+
+      // ── Save shortcuts ────────────────────────────────────────────────────
+      if ((ctrlKey || metaKey) && code === "KeyS") {
         e.preventDefault();
         handleSave();
+        return;
+      }
+      if (code === HK.save && !ctrlKey && !metaKey) {
+        // bare S only if it's not the same as Ctrl+S above
+        if (HK.save !== "KeyS") {
+          e.preventDefault();
+          handleSave();
+          return;
+        }
+      }
+
+      // ── Wave control ──────────────────────────────────────────────────────
+      if (code === HK.startWave) {
+        if (eng.state === "idle") {
+          e.preventDefault();
+          eng.startWave();
+        }
+        return;
+      }
+      if (code === HK.fastForward) {
+        e.preventDefault();
+        eng.toggleFastForward?.();
+        return;
+      }
+      if (code === HK.fortify) {
+        if (eng.state === "idle") {
+          e.preventDefault();
+          eng.fortify?.();
+        }
+        return;
+      }
+
+      // ── Ability keys ──────────────────────────────────────────────────────
+      const abilityMap = {
+        [HK.airstrike]: "airstrike",
+        [HK.emp]: "emp",
+        [HK.reinforce]: "reinforce",
+        [HK.overload]: "overload",
+        [HK.massRepair]: "mass_repair",
+      };
+      if (abilityMap[code]) {
+        e.preventDefault();
+        eng.triggerAbility(abilityMap[code]);
+        return;
+      }
+
+      // ── Tower selection ───────────────────────────────────────────────────
+      const towerKeyMap = {
+        [HK.selectBasic]: "basic",
+        [HK.selectSniper]: "sniper",
+        [HK.selectCannon]: "cannon",
+        [HK.selectLaser]: "laser",
+        [HK.selectFreeze]: "freeze",
+        [HK.selectTesla]: "tesla",
+        [HK.selectInferno]: "inferno",
+        [HK.selectVortex]: "vortex",
+        [HK.selectMissile]: "missile",
+      };
+      if (towerKeyMap[code]) {
+        const type = towerKeyMap[code];
+        if (eng.levelConfig?.unlockedTowers?.includes(type)) {
+          e.preventDefault();
+          setSelected(type);
+          setSellMode(false);
+          eng.setSelectedTowerType(type);
+          eng.selectTowerCell(-1, -1);
+          setActiveTab("build");
+        }
+        return;
+      }
+
+      // ── Sell mode toggle ──────────────────────────────────────────────────
+      if (code === HK.sellMode) {
+        e.preventDefault();
+        setSellMode((m) => !m);
+        return;
+      }
+
+      // ── Tab switches ──────────────────────────────────────────────────────
+      if (code === HK.tabBuild) {
+        e.preventDefault();
+        setActiveTab("build");
+        return;
+      }
+      if (code === HK.tabUpgrade) {
+        e.preventDefault();
+        setActiveTab("upgrade");
+        return;
+      }
+      if (code === HK.tabIntel) {
+        e.preventDefault();
+        setActiveTab("intel");
+        return;
+      }
+      if (code === HK.tabLevels) {
+        e.preventDefault();
+        setActiveTab("levels");
+        return;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []); // eslint-disable-line
+  }, [handleSave]); // eslint-disable-line
 
   const handleDeleteSave = useCallback(() => {
     localStorage.removeItem(LS_SAVE);
@@ -1390,306 +1511,352 @@ export default function App() {
               <div
                 style={{
                   position: "fixed",
-                  bottom: 10,
-                  left: 10,
-                  right: 10,
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
                   zIndex: 100,
                   display: "flex",
-                  gap: 6,
-                  alignItems: "stretch",
+                  flexDirection: "column",
                   transform: bottomBarVisible
                     ? "translateY(0)"
-                    : "translateY(120%)",
+                    : "translateY(100%)",
                   transition: "transform 0.3s ease",
                   pointerEvents: bottomBarVisible ? "all" : "none",
+                  background: "rgba(6,6,14,0.96)",
+                  borderTop: "1px solid #1e293b",
                 }}
               >
-                {/* Abilities — shown during wave AND idle (grayed out when not ready) */}
-                <div style={{ display: "flex", gap: 5, flex: 1 }}>
-                  {Object.entries(gameState.abilities || {}).map(
-                    ([key, ab]) => {
-                      const ready =
-                        ab.cooldownLeft === 0 && gameState.state === "wave";
-                      const pct = Math.max(
-                        0,
-                        1 - ab.cooldownLeft / ab.cooldown,
-                      );
-                      return (
-                        <button
-                          key={key}
-                          onClick={() => ready && handleTriggerAbility(key)}
-                          title={ab.desc}
-                          style={{
-                            flex: 1,
-                            padding: "5px 4px",
-                            border: `1px solid ${ready ? ab.color : "#1e293b"}`,
-                            borderRadius: 5,
-                            background: ready
-                              ? `rgba(6,6,16,0.88)`
-                              : "rgba(6,6,16,0.72)",
-                            color: ready ? ab.color : "#374151",
-                            fontFamily: mono,
-                            fontSize: 9,
-                            cursor: ready ? "pointer" : "not-allowed",
-                            textAlign: "center",
-                            position: "relative",
-                            overflow: "hidden",
-                          }}
-                        >
-                          <div
-                            style={{
-                              position: "absolute",
-                              bottom: 0,
-                              left: 0,
-                              height: "2px",
-                              width: `${pct * 100}%`,
-                              background: ab.color,
-                              borderRadius: 2,
-                            }}
-                          />
-                          <div style={{ fontSize: 14 }}>{ab.icon}</div>
-                          <div style={{ fontSize: 8 }}>{ab.name}</div>
-                          <div style={{ fontSize: 7, color: "#475569" }}>
-                            {ab.cooldownLeft > 0
-                              ? `${Math.ceil(ab.cooldownLeft / 60)}s`
-                              : "READY"}
-                          </div>
-                        </button>
-                      );
-                    },
-                  )}
+                {/* ── Tab row (mirrors HUD tabs) ─────────────────────────── */}
+                <div
+                  style={{ display: "flex", borderBottom: "1px solid #1e293b" }}
+                >
+                  {[
+                    { id: "build", icon: "🔨", label: "Build" },
+                    { id: "upgrade", icon: "⬆️", label: "Upgrade" },
+                    { id: "intel", icon: "🧠", label: "Intel" },
+                    { id: "levels", icon: "🗺️", label: "Levels" },
+                  ].map((tab) => {
+                    const tabColors = {
+                      build: "#4ade80",
+                      upgrade: "#fbbf24",
+                      intel: "#e879f9",
+                      levels: "#38bdf8",
+                    };
+                    const isActive = activeTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => {
+                          setActiveTab(tab.id);
+                          setHudVisible(true);
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: "5px 0",
+                          fontSize: 9,
+                          fontFamily: mono,
+                          background: isActive ? "#1e293b" : "transparent",
+                          color: isActive ? tabColors[tab.id] : "#475569",
+                          border: "none",
+                          borderBottom: isActive
+                            ? `2px solid ${tabColors[tab.id]}`
+                            : "2px solid transparent",
+                          cursor: "pointer",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        {tab.icon} {tab.label}
+                      </button>
+                    );
+                  })}
                 </div>
 
-                {/* Right side — changes based on state */}
+                {/* ── Ability row + action buttons ───────────────────────── */}
                 <div
                   style={{
                     display: "flex",
-                    flexDirection: "column",
                     gap: 5,
-                    minWidth: 100,
+                    padding: "6px 8px 8px",
+                    alignItems: "stretch",
                   }}
                 >
-                  {/* Between waves: Fortify + Send Wave */}
-                  {gameState.state === "idle" && (
-                    <>
-                      <div style={{ display: "flex", gap: 5 }}>
-                        <button
-                          onClick={handleFortify}
-                          disabled={
-                            gameState.gold < gameState.fortifyCost ||
-                            gameState.fortifyLevel >= gameState.maxFortifyLevel
-                          }
-                          style={{
-                            flex: 1,
-                            padding: "5px 8px",
-                            background: "rgba(6,6,16,0.88)",
-                            border: `1px solid ${gameState.gold >= gameState.fortifyCost && gameState.fortifyLevel < gameState.maxFortifyLevel ? "#fbbf24" : "#1e293b"}`,
-                            borderRadius: 5,
-                            color:
-                              gameState.gold >= gameState.fortifyCost &&
-                              gameState.fortifyLevel < gameState.maxFortifyLevel
-                                ? "#fbbf24"
-                                : "#374151",
-                            fontFamily: mono,
-                            fontSize: 9,
-                            cursor:
-                              gameState.gold >= gameState.fortifyCost &&
-                              gameState.fortifyLevel < gameState.maxFortifyLevel
-                                ? "pointer"
-                                : "not-allowed",
-                          }}
-                        >
-                          🏰{" "}
-                          {gameState.fortifyLevel >= gameState.maxFortifyLevel
-                            ? "MAX"
-                            : `${gameState.fortifyCost}g`}
-                        </button>
+                  {/* Abilities */}
+                  <div style={{ display: "flex", gap: 4, flex: 1 }}>
+                    {Object.entries(gameState.abilities || {}).map(
+                      ([key, ab]) => {
+                        const ready =
+                          ab.cooldownLeft === 0 && gameState.state === "wave";
+                        const pct = Math.max(
+                          0,
+                          1 - ab.cooldownLeft / ab.cooldown,
+                        );
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => ready && handleTriggerAbility(key)}
+                            title={ab.desc}
+                            style={{
+                              flex: 1,
+                              padding: "4px 3px",
+                              border: `1px solid ${ready ? ab.color : "#1e293b"}`,
+                              borderRadius: 5,
+                              background: ready
+                                ? `rgba(6,6,16,0.88)`
+                                : "rgba(6,6,16,0.72)",
+                              color: ready ? ab.color : "#374151",
+                              fontFamily: mono,
+                              fontSize: 8,
+                              cursor: ready ? "pointer" : "not-allowed",
+                              textAlign: "center",
+                              position: "relative",
+                              overflow: "hidden",
+                            }}
+                          >
+                            <div
+                              style={{
+                                position: "absolute",
+                                bottom: 0,
+                                left: 0,
+                                height: "2px",
+                                width: `${pct * 100}%`,
+                                background: ab.color,
+                                borderRadius: 2,
+                              }}
+                            />
+                            <div style={{ fontSize: 13 }}>{ab.icon}</div>
+                            <div style={{ fontSize: 7 }}>{ab.name}</div>
+                            <div style={{ fontSize: 6, color: "#475569" }}>
+                              {ab.cooldownLeft > 0
+                                ? `${Math.ceil(ab.cooldownLeft / 60)}s`
+                                : "READY"}
+                            </div>
+                          </button>
+                        );
+                      },
+                    )}
+                  </div>
+
+                  {/* Right side — state-dependent actions */}
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      minWidth: 96,
+                    }}
+                  >
+                    {/* Between waves: Fortify + Save + Repair + Start Wave */}
+                    {gameState.state === "idle" && (
+                      <>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button
+                            onClick={handleFortify}
+                            disabled={
+                              gameState.gold < gameState.fortifyCost ||
+                              gameState.fortifyLevel >=
+                                gameState.maxFortifyLevel
+                            }
+                            style={{
+                              flex: 1,
+                              padding: "4px 6px",
+                              background: "rgba(6,6,16,0.88)",
+                              border: `1px solid ${gameState.gold >= gameState.fortifyCost && gameState.fortifyLevel < gameState.maxFortifyLevel ? "#fbbf24" : "#1e293b"}`,
+                              borderRadius: 5,
+                              color:
+                                gameState.gold >= gameState.fortifyCost &&
+                                gameState.fortifyLevel <
+                                  gameState.maxFortifyLevel
+                                  ? "#fbbf24"
+                                  : "#374151",
+                              fontFamily: mono,
+                              fontSize: 8,
+                              cursor:
+                                gameState.gold >= gameState.fortifyCost &&
+                                gameState.fortifyLevel <
+                                  gameState.maxFortifyLevel
+                                  ? "pointer"
+                                  : "not-allowed",
+                            }}
+                          >
+                            🏰{" "}
+                            {gameState.fortifyLevel >= gameState.maxFortifyLevel
+                              ? "MAX"
+                              : `${gameState.fortifyCost}g`}
+                          </button>
+                          <button
+                            onClick={handleSave}
+                            style={{
+                              flex: 1,
+                              padding: "4px 6px",
+                              background: "rgba(6,6,16,0.88)",
+                              border: "1px solid #38bdf8",
+                              borderRadius: 5,
+                              color: "#38bdf8",
+                              fontFamily: mono,
+                              fontSize: 8,
+                              cursor: "pointer",
+                            }}
+                          >
+                            💾 Save
+                          </button>
+                        </div>
+
+                        {gameState.damagedTowerCount > 0 && (
+                          <button
+                            onClick={handleRepairAll}
+                            disabled={gameState.gold < gameState.repairAllCost}
+                            style={{
+                              padding: "3px 6px",
+                              background: "rgba(6,6,16,0.88)",
+                              border: `1px solid ${
+                                gameState.gold >= gameState.repairAllCost
+                                  ? "#4ade80"
+                                  : "#1e293b"
+                              }`,
+                              borderRadius: 5,
+                              color:
+                                gameState.gold >= gameState.repairAllCost
+                                  ? "#4ade80"
+                                  : "#374151",
+                              fontFamily: mono,
+                              fontSize: 8,
+                              cursor:
+                                gameState.gold >= gameState.repairAllCost
+                                  ? "pointer"
+                                  : "not-allowed",
+                            }}
+                          >
+                            🔧 Repair ({gameState.damagedTowerCount}){" "}
+                            {gameState.repairAllCost}g
+                          </button>
+                        )}
 
                         <button
-                          onClick={handleSave}
+                          onClick={handleStartWave}
                           style={{
-                            flex: 1,
-                            padding: "5px 8px",
+                            padding: "6px 8px",
                             background: "rgba(6,6,16,0.88)",
-                            border: "1px solid #38bdf8",
+                            border: "1px solid #4ade80",
                             borderRadius: 5,
-                            color: "#38bdf8",
+                            color: "#4ade80",
                             fontFamily: mono,
-                            fontSize: 9,
+                            fontSize: 10,
+                            fontWeight: "bold",
                             cursor: "pointer",
+                            textAlign: "center",
                           }}
                         >
-                          💾 Save
+                          ▶ WAVE {gameState.wave + 1}
+                          {gameState.bossWaves?.[gameState.wave + 1]
+                            ? " 💀"
+                            : ""}
                         </button>
-                      </div>
+                      </>
+                    )}
 
-                      {/* Repair All — only show when towers are damaged */}
-                      {gameState.damagedTowerCount > 0 && (
+                    {/* During wave: auto-repair + pause + fast-forward */}
+                    {gameState.state === "wave" && (
+                      <>
                         <button
-                          onClick={handleRepairAll}
-                          disabled={gameState.gold < gameState.repairAllCost}
+                          onClick={handleAutoRepair}
                           style={{
-                            padding: "4px 8px",
+                            padding: "4px 6px",
+                            background: gameState.autoRepair
+                              ? "rgba(74,222,128,0.15)"
+                              : "rgba(6,6,16,0.88)",
+                            border: `1px solid ${gameState.autoRepair ? "#4ade80" : "#334155"}`,
+                            borderRadius: 5,
+                            color: gameState.autoRepair ? "#4ade80" : "#475569",
+                            fontFamily: mono,
+                            fontSize: 8,
+                            cursor: "pointer",
+                            textAlign: "center",
+                          }}
+                        >
+                          🔧 AUTO {gameState.autoRepair ? "ON" : "OFF"}
+                        </button>
+
+                        <button
+                          onClick={handlePause}
+                          style={{
+                            padding: "6px 8px",
                             background: "rgba(6,6,16,0.88)",
+                            border: `1px solid ${gameState.paused ? "#4ade80" : "#fbbf24"}`,
+                            borderRadius: 5,
+                            color: gameState.paused ? "#4ade80" : "#fbbf24",
+                            fontFamily: mono,
+                            fontSize: 10,
+                            fontWeight: "bold",
+                            cursor: "pointer",
+                            textAlign: "center",
+                          }}
+                        >
+                          {gameState.paused ? "▶ RESUME" : "⏸ PAUSE"}
+                        </button>
+
+                        <button
+                          onClick={handleFastForward}
+                          style={{
+                            padding: "4px 6px",
+                            background:
+                              gameState.speedMultiplier === 4
+                                ? "rgba(239,68,68,0.2)"
+                                : gameState.speedMultiplier === 2
+                                  ? "rgba(251,191,36,0.15)"
+                                  : "rgba(6,6,16,0.88)",
                             border: `1px solid ${
-                              gameState.gold >= gameState.repairAllCost
-                                ? "#4ade80"
-                                : "#1e293b"
+                              gameState.speedMultiplier === 4
+                                ? "#ef4444"
+                                : gameState.speedMultiplier === 2
+                                  ? "#fbbf24"
+                                  : "#334155"
                             }`,
                             borderRadius: 5,
                             color:
-                              gameState.gold >= gameState.repairAllCost
-                                ? "#4ade80"
-                                : "#374151",
+                              gameState.speedMultiplier === 4
+                                ? "#ef4444"
+                                : gameState.speedMultiplier === 2
+                                  ? "#fbbf24"
+                                  : "#64748b",
                             fontFamily: mono,
                             fontSize: 9,
-                            cursor:
-                              gameState.gold >= gameState.repairAllCost
-                                ? "pointer"
-                                : "not-allowed",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 6,
+                            cursor: "pointer",
+                            textAlign: "center",
                           }}
                         >
-                          <span>
-                            🔧 Repair All ({gameState.damagedTowerCount})
-                          </span>
-                          <span style={{ fontWeight: "bold" }}>
-                            {gameState.repairAllCost}g
-                          </span>
+                          {gameState.speedMultiplier === 4
+                            ? "⏩ 4×"
+                            : gameState.speedMultiplier === 2
+                              ? "⏩ 2×"
+                              : "▶ 1×"}
                         </button>
-                      )}
+                      </>
+                    )}
 
+                    {/* Game over / victory */}
+                    {(gameState.state === "gameover" ||
+                      gameState.state === "victory") && (
                       <button
-                        onClick={handleStartWave}
+                        onClick={() => handleReset(gameState.levelId)}
                         style={{
-                          padding: "7px 8px",
+                          padding: "6px 8px",
                           background: "rgba(6,6,16,0.88)",
-                          border: "1px solid #4ade80",
-                          borderRadius: 5,
-                          color: "#4ade80",
-                          fontFamily: mono,
-                          fontSize: 10,
-                          fontWeight: "bold",
-                          cursor: "pointer",
-                          textAlign: "center",
-                        }}
-                      >
-                        ▶ WAVE {gameState.wave + 1}
-                        {gameState.bossWaves?.[gameState.wave + 1] ? " 💀" : ""}
-                      </button>
-                    </>
-                  )}
-
-                  {/* During wave: pause only */}
-                  {gameState.state === "wave" && (
-                    <>
-                      {/* Auto-repair toggle — shows during wave */}
-                      <button
-                        onClick={handleAutoRepair}
-                        style={{
-                          padding: "5px 8px",
-                          background: gameState.autoRepair
-                            ? "rgba(74,222,128,0.15)"
-                            : "rgba(6,6,16,0.88)",
-                          border: `1px solid ${gameState.autoRepair ? "#4ade80" : "#334155"}`,
-                          borderRadius: 5,
-                          color: gameState.autoRepair ? "#4ade80" : "#475569",
-                          fontFamily: mono,
-                          fontSize: 9,
-                          cursor: "pointer",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: 1,
-                        }}
-                      >
-                        <span>🔧 AUTO</span>
-                        <span style={{ fontSize: 7, color: "#475569" }}>
-                          {gameState.autoRepair ? "ON" : "OFF"}
-                        </span>
-                      </button>
-
-                      {/* PAUSE/RESUME — shows during wave */}
-                      <button
-                        onClick={handlePause}
-                        style={{
-                          padding: "7px 8px",
-                          background: "rgba(6,6,16,0.88)",
-                          border: `1px solid ${gameState.paused ? "#4ade80" : "#fbbf24"}`,
-                          borderRadius: 5,
-                          color: gameState.paused ? "#4ade80" : "#fbbf24",
-                          fontFamily: mono,
-                          fontSize: 10,
-                          fontWeight: "bold",
-                          cursor: "pointer",
-                          textAlign: "center",
-                        }}
-                      >
-                        {gameState.paused ? "▶ RESUME" : "⏸ PAUSE"}
-                      </button>
-
-                      {/* Fast Forward */}
-                      <button
-                        onClick={handleFastForward}
-                        style={{
-                          padding: "5px 8px",
-                          background:
-                            gameState.speedMultiplier === 4
-                              ? "rgba(239,68,68,0.2)"
-                              : gameState.speedMultiplier === 2
-                                ? "rgba(251,191,36,0.15)"
-                                : "rgba(6,6,16,0.88)",
-                          border: `1px solid ${
-                            gameState.speedMultiplier === 4
-                              ? "#ef4444"
-                              : gameState.speedMultiplier === 2
-                                ? "#fbbf24"
-                                : "#334155"
-                          }`,
+                          border: `1px solid ${gameState.state === "victory" ? "#4ade80" : "#ef4444"}`,
                           borderRadius: 5,
                           color:
-                            gameState.speedMultiplier === 4
-                              ? "#ef4444"
-                              : gameState.speedMultiplier === 2
-                                ? "#fbbf24"
-                                : "#64748b",
+                            gameState.state === "victory"
+                              ? "#4ade80"
+                              : "#ef4444",
                           fontFamily: mono,
-                          fontSize: 9,
+                          fontSize: 10,
+                          fontWeight: "bold",
                           cursor: "pointer",
                         }}
                       >
-                        {gameState.speedMultiplier === 4
-                          ? "⏩ 4×"
-                          : gameState.speedMultiplier === 2
-                            ? "⏩ 2×"
-                            : "▶ 1×"}
+                        ↺ AGAIN
                       </button>
-                    </>
-                  )}
-
-                  {/* Game over / victory */}
-                  {(gameState.state === "gameover" ||
-                    gameState.state === "victory") && (
-                    <button
-                      onClick={() => handleReset(gameState.levelId)}
-                      style={{
-                        padding: "7px 8px",
-                        background: "rgba(6,6,16,0.88)",
-                        border: `1px solid ${gameState.state === "victory" ? "#4ade80" : "#ef4444"}`,
-                        borderRadius: 5,
-                        color:
-                          gameState.state === "victory" ? "#4ade80" : "#ef4444",
-                        fontFamily: mono,
-                        fontSize: 10,
-                        fontWeight: "bold",
-                        cursor: "pointer",
-                      }}
-                    >
-                      ↺ AGAIN
-                    </button>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
             )}

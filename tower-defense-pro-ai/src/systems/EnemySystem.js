@@ -143,6 +143,15 @@ export class EnemySystem {
       waveClearTime: 0,
     };
 
+    // ── Endless milestone armor (Elite Units + Apex Tide) ─────────────────────
+    if (engine.endlessWaveMods?.armorBonus) {
+      e.armor = Math.min(
+        0.92,
+        e.armor + engine.endlessWaveMods.armorBonus,
+      );
+      e.baseArmor = e.armor;
+    }
+
     // ── Apply wave modifier to this enemy ─────────────────────────────────────
     if (engine.activeModifier) {
       const mod = engine.activeModifier.apply;
@@ -465,23 +474,13 @@ export class EnemySystem {
         }
       }
 
-      // ── GLOBAL SLOW: Absolute Zero — all enemies permanently slowed ──────────
-      const hasGlobalSlow = engine.towers.some((t) =>
-        t.specials?.includes("globalSlow"),
-      );
-      if (hasGlobalSlow && !e.immunities.includes("freeze")) {
-        const globalSlowTower = engine.towers.find((t) =>
-          t.specials?.includes("globalSlow"),
-        );
-        if (globalSlowTower) {
-          const dist = Math.sqrt(
-            (e.x - globalSlowTower.x) ** 2 + (e.y - globalSlowTower.y) ** 2,
-          );
-          if (dist <= globalSlowTower.range * 2.5) {
-            // ← range-limited now
-            e.slowTimer = Math.max(e.slowTimer, 5);
-          }
-        }
+      // ── GLOBAL SLOW: Absolute Zero — map-wide (strongest freeze tower only) ─
+      const globalSlowTower = engine.towers
+        .filter((t) => t.specials?.includes("globalSlow"))
+        .sort((a, b) => (b.range || 0) - (a.range || 0))[0];
+      if (globalSlowTower && !e.immunities.includes("freeze")) {
+        // Refresh a light permanent slow — does not stack with duplicate towers.
+        e.slowTimer = Math.max(e.slowTimer, 12);
       }
 
       // ── ARMOR SLOW: Permafrost — slowed enemies lose 30% armor ───────────────
@@ -523,7 +522,13 @@ export class EnemySystem {
         if (engine.tick % 20 === 0) {
           // Solar Core: burn ignores armor (true damage) and stacks cap 10
           const maxStacks = e._burnTrueDamage ? 10 : 3;
-          const burnDmg = e.burnDmg * Math.min(e.burnStacks || 1, maxStacks);
+          let burnDmg = e.burnDmg * Math.min(e.burnStacks || 1, maxStacks);
+          if (
+            e._gravityStrength > 0.1 &&
+            engine.activeSynergies?.some((s) => s.key === "vortex_inferno")
+          ) {
+            burnDmg *= 2;
+          }
 
           if (e._burnTrueDamage) {
             // True damage — bypass armor entirely
@@ -944,6 +949,9 @@ export class EnemySystem {
       const dx = tgt.x - e.x,
         dy = tgt.y - e.y,
         dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > 0.01) e.angle = Math.atan2(dy, dx);
+
       if (dist < e.speed) {
         e.pathIndex++;
         e.x = tgt.x;

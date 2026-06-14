@@ -351,7 +351,10 @@ export class WaveAI {
     const key = `${towerType}:${enemyType}`;
     this.killsByTowerVsEnemy[key] = (this.killsByTowerVsEnemy[key] || 0) + 1;
 
-    const threshold = ADMIN_CONFIG.enemyEvolution?.killThresholdPerType || 80;
+    const threshold =
+      this._endlessMods?.evolutionKillThreshold ??
+      ADMIN_CONFIG.enemyEvolution?.killThresholdPerType ??
+      80;
     const maxEvo = ADMIN_CONFIG.enemyEvolution?.maxEvolutionsPerType || 2;
 
     if (this.killsByTowerVsEnemy[key] === threshold) {
@@ -411,8 +414,14 @@ export class WaveAI {
         ? Math.pow(CFG.lateGameExpScale || 1.18, (waveNumber - 20) / 10)
         : 1;
 
-    const finalHpMult = hpMult * lateGameFactor;
-    const finalSpeedMult = speedMult * (1 + (lateGameFactor - 1) * 0.5);
+    let finalHpMult = hpMult * lateGameFactor;
+    let finalSpeedMult = speedMult * (1 + (lateGameFactor - 1) * 0.5);
+
+    const endless = this._endlessMods;
+    if (endless) {
+      finalHpMult *= endless.hpMult;
+      finalSpeedMult *= endless.speedMult;
+    }
 
     let bossType = this.bossWaves[waveNumber] || null;
     if (!bossType) bossType = this._endlessBossForWave(waveNumber);
@@ -434,8 +443,18 @@ export class WaveAI {
     const finalMessage = `${phaseMsg} ${plan.message || ""}`.trim();
 
     if (waveNumber <= CFG.minWavesBeforeAdapt) {
-      const comp =
-        waveNumber === 1
+      const earlyComp = endless
+        ? this._injectEndlessComposition(
+            waveNumber === 1
+              ? [{ type: "basic", weight: 10 }]
+              : [
+                  { type: "basic", weight: 7 },
+                  { type: "fast", weight: 3 },
+                ],
+            waveNumber,
+            endless,
+          )
+        : waveNumber === 1
           ? [{ type: "basic", weight: 10 }]
           : [
               { type: "basic", weight: 7 },
@@ -444,25 +463,39 @@ export class WaveAI {
 
       return this._buildWave(
         waveNumber,
-        comp,
+        earlyComp,
         baseCount,
         finalHpMult,
         finalSpeedMult,
-        finalMessage,
+        endless?.milestoneLabel
+          ? `⚠ ${endless.milestoneLabel} — ${finalMessage}`
+          : finalMessage,
         bossType,
         progress,
+        endless,
       );
     }
 
+    let composition = plan.composition;
+    if (endless)
+      composition = this._injectEndlessComposition(
+        composition,
+        waveNumber,
+        endless,
+      );
+
     const waveData = this._buildWave(
       waveNumber,
-      plan.composition,
+      composition,
       baseCount,
       finalHpMult,
       finalSpeedMult,
-      finalMessage,
+      endless?.milestoneLabel
+        ? `⚠ ${endless.milestoneLabel} — ${finalMessage}`
+        : finalMessage,
       bossType,
       progress,
+      endless,
     );
 
     this.adaptationLog.push({
@@ -833,6 +866,23 @@ export class WaveAI {
     };
   }
 
+  _injectEndlessComposition(composition, waveNumber, endless) {
+    const comp = composition.map((c) => ({ ...c }));
+    if (endless.forceStealth) {
+      comp.push({ type: "stealth", weight: 2 + Math.floor(waveNumber / 40) });
+    }
+    if (endless.addJuggernaut) {
+      comp.push({
+        type: "juggernaut",
+        weight: 2 + Math.floor(waveNumber / 60),
+      });
+    }
+    if (endless.addChronoRaider) {
+      comp.push({ type: "chrono_raider", weight: 2 + Math.floor(waveNumber / 80) });
+    }
+    return comp;
+  }
+
   _buildWave(
     waveNumber,
     composition,
@@ -842,6 +892,7 @@ export class WaveAI {
     message,
     bossType,
     progress,
+    endlessMods = null,
   ) {
     let bossDelay = 0;
     let bossLane = 0;
@@ -898,7 +949,11 @@ export class WaveAI {
     const totalWaveDuration = globalDelay;
 
     if (bossType && ENEMY_TYPES[bossType]) {
-      const bossHpMult = hpMult * 0.9 * ADMIN_CONFIG.ai.bossHpScaling;
+      const bossHpMult =
+        hpMult *
+        0.9 *
+        ADMIN_CONFIG.ai.bossHpScaling *
+        (endlessMods?.bossHpMult || 1);
 
       const r = Math.random();
       const bossPhase = r < 0.33 ? "early" : r < 0.66 ? "mid" : "late";
@@ -968,12 +1023,21 @@ export class WaveAI {
 
     if (waveNumber >= 20 && eligibleSecond.length > 0) {
       const isMilestone = waveNumber % 10 === 0;
-      const chance = isMilestone
+      const forceDouble =
+        endlessMods?.doubleBoss &&
+        (waveNumber === 50 || waveNumber === 100 || waveNumber === 200);
+      const chance = forceDouble
         ? 1.0
-        : Math.min(0.7, 0.25 + (waveNumber - 20) * 0.01);
-      if (Math.random() < chance) {
+        : isMilestone
+          ? 1.0
+          : Math.min(0.7, 0.25 + (waveNumber - 20) * 0.01);
+      if (Math.random() < chance || forceDouble) {
         secondBossType =
-          eligibleSecond[Math.floor(Math.random() * eligibleSecond.length)];
+          waveNumber === 100
+            ? "boss_colossus"
+            : waveNumber === 200
+              ? "boss_voidreaper"
+              : eligibleSecond[Math.floor(Math.random() * eligibleSecond.length)];
       }
     }
 
@@ -983,7 +1047,11 @@ export class WaveAI {
           ? Math.max(80, totalWaveDuration * 0.25)
           : Math.max(80, totalWaveDuration * 0.75);
 
-      const secondHpMult = hpMult * 0.75 * ADMIN_CONFIG.ai.bossHpScaling;
+      const secondHpMult =
+        hpMult *
+        0.75 *
+        ADMIN_CONFIG.ai.bossHpScaling *
+        (endlessMods?.bossHpMult || 1);
       const secondLane = bossLane === 0 ? 1 : 0;
 
       enemies.push({
@@ -1051,7 +1119,10 @@ export class WaveAI {
     };
   }
 
-  _endlessBossForWave(waveNumber) {
+  _endlessBossForWave(waveNumber, endlessMods = null) {
+    if (endlessMods?.signatureBoss && ENEMY_TYPES[endlessMods.signatureBoss]) {
+      return endlessMods.signatureBoss;
+    }
     if (waveNumber < 10) return null;
     if (waveNumber % 5 !== 0) return null;
     const schedule = ENDLESS_CONFIG.bossSchedule;

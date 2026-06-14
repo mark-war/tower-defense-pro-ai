@@ -96,6 +96,15 @@ export class CombatSystem {
       dmg *= 1.6;
     }
 
+    // Synergy: sniper_freeze — sniper crits on slowed enemies (+80% dmg)
+    if (
+      proj?.towerType === "sniper" &&
+      enemy.slowTimer > 0 &&
+      engine.activeSynergies.some((s) => s.key === "sniper_freeze")
+    ) {
+      dmg *= 1.8;
+    }
+
     // Synergy: vortex_inferno — pulled enemies take 2x burn damage
     if (
       enemy._gravityStrength > 0.1 &&

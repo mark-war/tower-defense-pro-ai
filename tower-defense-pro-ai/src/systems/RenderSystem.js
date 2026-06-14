@@ -18,6 +18,7 @@ import {
   drawPathCell,
   drawGroundCell,
   drawTowerShape,
+  drawTowerSkillAuras,
   drawEnemyShape,
   drawProjectile,
 } from "../helpers/drawHelpers.js";
@@ -216,17 +217,24 @@ export class RenderSystem {
       ctx.textBaseline = "alphabetic";
     }
 
-    // ── Streak display ────────────────────────────────────────────────────────
+    // ── Streak display — top-left corner, compact ─────────────────────────────
     if (engine._streakCount >= 5) {
       const alpha = Math.min(1, engine._streakTimer / 30);
-      ctx.globalAlpha = alpha;
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.92;
+      const streakLabel = `🔥 ${engine._streakCount}×`;
+      ctx.font = "bold 10px monospace";
+      const sw = ctx.measureText(streakLabel).width + 12;
+      ctx.fillStyle = "rgba(30,15,0,0.82)";
+      ctx.fillRect(6, 34, sw, 16);
+      ctx.strokeStyle = "#fbbf24";
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(6, 34, sw, 16);
       ctx.fillStyle = "#fbbf24";
-      ctx.font = `bold ${14 + Math.min(engine._streakCount, 20)}px monospace`;
-      ctx.textAlign = "center";
+      ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      ctx.fillText(`🔥 ${engine._streakCount} STREAK!`, W / 2, H / 2 - 60);
-      ctx.globalAlpha = 1;
-      ctx.textBaseline = "alphabetic";
+      ctx.fillText(streakLabel, 12, 42);
+      ctx.restore();
     }
 
     // ── Global buff banner ────────────────────────────────────────────────────
@@ -369,38 +377,7 @@ export class RenderSystem {
         ctx.fill();
       }
 
-      // Cyclone spin ring visual
-      if (tower.specials?.includes("cyclone")) {
-        const spinRadius = tower.range * 0.65;
-        const rot = engine.tick * 0.08;
-        ctx.save();
-        ctx.globalAlpha = 0.25 + 0.15 * Math.sin(engine.tick * 0.15);
-        ctx.strokeStyle = tower.color;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([8, 12]);
-        ctx.lineDashOffset = -engine.tick * 0.8; // animates the dash moving
-        ctx.beginPath();
-        ctx.arc(tower.x, tower.y, spinRadius, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // 3 orbiting dots
-        for (let i = 0; i < 3; i++) {
-          const a = rot + i * ((Math.PI * 2) / 3);
-          ctx.globalAlpha = 0.7;
-          ctx.fillStyle = tower.color;
-          ctx.beginPath();
-          ctx.arc(
-            tower.x + Math.cos(a) * spinRadius,
-            tower.y + Math.sin(a) * spinRadius,
-            4,
-            0,
-            Math.PI * 2,
-          );
-          ctx.fill();
-        }
-        ctx.restore();
-      }
+      drawTowerSkillAuras(ctx, tower, engine.tick);
 
       // tier badge
       {
@@ -1000,7 +977,7 @@ export class RenderSystem {
     ctx.textBaseline = "middle";
     ctx.fillText(waveLabel, 10, 15);
 
-    // ── AI TAUNT OVERLAY ─────────────────────────────────────────────────────
+    // ── AI TAUNT OVERLAY — top-left below streak pill ────────────────────────
     if (!engine._aiTaunt || engine._aiTaunt.life <= 0) {
       if (engine._aiTauntQueue?.length > 0) {
         engine._aiTaunt = engine._aiTauntQueue.shift();
@@ -1012,19 +989,32 @@ export class RenderSystem {
       const tAlpha =
         Math.min(1, engine._aiTaunt.life / 40) *
         Math.min(1, (240 - engine._aiTaunt.life + 40) / 40);
-      const msgW = Math.min(engine._aiTaunt.text.length * 6.2 + 32, W - 40);
+      // position: just below the streak pill (y=34+16=50) or below wave bar (y=34)
+      const tauntY = engine._streakCount >= 5 ? 54 : 34;
+      const maxTauntW = Math.min(300, W * 0.5);
       ctx.save();
+      ctx.font = "9px monospace";
+      const tauntText = `🧠 ${engine._aiTaunt.text}`;
+      // word-wrap to maxTauntW — just clamp with ellipsis for now
+      const measuredW = Math.min(
+        ctx.measureText(tauntText).width + 14,
+        maxTauntW,
+      );
       ctx.globalAlpha = tAlpha * 0.92;
       ctx.fillStyle = "rgba(8,0,18,0.85)";
-      ctx.fillRect((W - msgW) / 2, 34, msgW, 22);
-      ctx.strokeStyle = "#818cf8";
+      ctx.fillRect(6, tauntY, measuredW, 18);
+      ctx.strokeStyle = "#6d28d9";
       ctx.lineWidth = 0.5;
-      ctx.strokeRect((W - msgW) / 2, 34, msgW, 22);
+      ctx.strokeRect(6, tauntY, measuredW, 18);
       ctx.fillStyle = "#c4b5fd";
-      ctx.font = "10px monospace";
-      ctx.textAlign = "center";
+      ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      ctx.fillText(`🧠 ${engine._aiTaunt.text}`, W / 2, 45);
+      // clip text so it never overflows the pill
+      ctx.save();
+      ctx.rect(8, tauntY, measuredW - 4, 18);
+      ctx.clip();
+      ctx.fillText(tauntText, 12, tauntY + 9);
+      ctx.restore();
       ctx.restore();
     }
 

@@ -33,4 +33,24 @@ export class SynergySystem {
   has(key) {
     return this.engine.activeSynergies.some((s) => s.key === key);
   }
+
+  /**
+   * All synergy pairs with active flag (for HUD).
+   * Gameplay hooks: TowerSystem, CombatSystem, ProjectileSystem, EnemySystem.
+   */
+  getStatusList() {
+    const { towers } = this.engine;
+    return Object.entries(SYNERGIES).map(([key, syn]) => {
+      const hasA = towers.some((t) => t.type === syn.towers[0]);
+      const hasB = towers.some((t) => t.type === syn.towers[1]);
+      return {
+        key,
+        ...syn,
+        hasA,
+        hasB,
+        ready: hasA && hasB,
+        active: hasA && hasB,
+      };
+    });
+  }
 }

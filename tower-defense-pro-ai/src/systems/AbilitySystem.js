@@ -60,9 +60,10 @@ export class AbilitySystem {
 
   _fireAirstrike() {
     const engine = this.engine;
+    const dmg = Math.min(2200, 320 + engine.wave * 14);
     let hits = 0;
     for (let i = engine.enemies.length - 1; i >= 0; i--) {
-      engine.combatSystem.damageEnemy(engine.enemies[i], 500, {
+      engine.combatSystem.damageEnemy(engine.enemies[i], dmg, {
         towerType: null,
         towerId: null,
         armorPiercing: true,
@@ -99,10 +100,10 @@ export class AbilitySystem {
   _fireReinforce() {
     const engine = this.engine;
     engine.globalBuff = {
-      fireRateMult: 0.5,
-      damageMult: 1.5,
-      timer: 480,
-      label: "🏰 Reinforce — 2× Fire!",
+      fireRateMult: 0.55,
+      damageMult: 1.35,
+      timer: 450,
+      label: "🏰 Reinforce — faster fire + bonus dmg!",
     };
     engine.vfx.addFloatingText(
       engine.canvas.width / 2,
@@ -116,9 +117,9 @@ export class AbilitySystem {
     const engine = this.engine;
     this.engine.globalBuff = {
       fireRateMult: 1,
-      damageMult: 3,
-      timer: 300,
-      label: "⚡ OVERLOAD — 3× DMG!",
+      damageMult: 2.5,
+      timer: 330,
+      label: "⚡ OVERLOAD — 2.5× DMG!",
     };
     engine.vfx.addFloatingText(
       engine.canvas.width / 2,

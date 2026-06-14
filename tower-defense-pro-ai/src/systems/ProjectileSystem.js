@@ -479,7 +479,7 @@ export class ProjectileSystem {
       for (let j = engine.enemies.length - 1; j >= 0; j--) {
         const e = engine.enemies[j];
 
-        // defensive check since enemies can be removed mid-loop
+        // Enemy may have been removed mid-frame by a concurrent kill — safe to skip
         if (!e) continue;
 
         const canHitStealth =

@@ -548,7 +548,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleSave]); // eslint-disable-line
+  }, [handleSave]);
 
   const handleDeleteSave = useCallback(() => {
     localStorage.removeItem(LS_SAVE);

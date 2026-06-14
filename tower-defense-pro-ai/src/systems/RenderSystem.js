@@ -26,6 +26,20 @@ import {
 export class RenderSystem {
   constructor(engine) {
     this.engine = engine;
+    // Offscreen canvas for the static grid — rebuilt only when map/towers change
+    this._gridCanvas = null;
+    this._gridCtx = null;
+    this._gridDirty = true; // force rebuild on first draw
+    this._lastMapKey = null;
+    this._lastTowerCount = -1;
+    this._lastSecondPathSize = 0;
+    // Frame counter for throttling low-priority effects
+    this._frameCount = 0;
+  }
+
+  /** Mark the grid cache as stale (call after tower placement/sell). */
+  invalidateGrid() {
+    this._gridDirty = true;
   }
 
   draw() {
@@ -54,55 +68,85 @@ export class RenderSystem {
 
     ctx.clearRect(-10, -10, W + 20, H + 20);
 
-    // ── Background grid with scanlines ───────────────────────────────────────
+    // ── Background grid — rendered to offscreen canvas, reused each frame ────
     const mapStyle = engine.activeSkin?.mapStyle || "neon";
+    const secondPathSize = engine._secondPathCells?.size || 0;
 
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const isPath = engine._isPathCell(col, row);
-        const isSecondPath = engine._secondPathCells?.has(`${col},${row}`);
-        const x = col * CELL_SIZE,
-          y = row * CELL_SIZE;
+    // Rebuild offscreen grid when map changes, towers change, or second path changes
+    const needsRebuild =
+      this._gridDirty ||
+      this._lastMapKey !== engine._currentMapKey ||
+      this._lastTowerCount !== engine.towers.length ||
+      this._lastSecondPathSize !== secondPathSize ||
+      !this._gridCanvas;
 
-        if (isPath || isSecondPath) {
-          // Path base
-          ctx.fillStyle =
-            isSecondPath && !isPath
-              ? blendColor(theme.path, "#4ade80", 0.15)
-              : theme.path;
-          ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-          // subtle path glow
-          ctx.fillStyle = "rgba(255,255,255,0.03)";
-          ctx.fillRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
-
-          drawPathCell(ctx, x, y, CELL_SIZE, mapStyle, theme, engine.tick);
-        } else {
-          // Ground base — checkerboard
-          ctx.fillStyle =
-            (row + col) % 2 === 0 ? theme.bg : shadeColor(theme.bg, 8);
-          ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
-          drawGroundCell(
-            ctx,
-            x,
-            y,
-            CELL_SIZE,
-            mapStyle,
-            theme,
-            row,
-            col,
-            engine.tick,
-          );
-        }
-        // thin grid lines
-        ctx.strokeStyle = isPath ? theme.pathBorder : "rgba(255,255,255,0.03)";
-        ctx.lineWidth = 0.5;
-        ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+    if (needsRebuild) {
+      if (
+        !this._gridCanvas ||
+        this._gridCanvas.width !== W ||
+        this._gridCanvas.height !== H
+      ) {
+        this._gridCanvas = document.createElement("canvas");
+        this._gridCanvas.width = W;
+        this._gridCanvas.height = H;
+        this._gridCtx = this._gridCanvas.getContext("2d");
       }
+      const gc = this._gridCtx;
+      gc.clearRect(0, 0, W, H);
+
+      // Use tick=0 for static decorations — avoids per-tick animation in cache
+      const staticTick = 0;
+
+      for (let row = 0; row < GRID_ROWS; row++) {
+        for (let col = 0; col < GRID_COLS; col++) {
+          const isPath = engine._isPathCell(col, row);
+          const isSecondPath = engine._secondPathCells?.has(`${col},${row}`);
+          const x = col * CELL_SIZE,
+            y = row * CELL_SIZE;
+
+          if (isPath || isSecondPath) {
+            gc.fillStyle =
+              isSecondPath && !isPath
+                ? blendColor(theme.path, "#4ade80", 0.15)
+                : theme.path;
+            gc.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+            gc.fillStyle = "rgba(255,255,255,0.03)";
+            gc.fillRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+            drawPathCell(gc, x, y, CELL_SIZE, mapStyle, theme, staticTick);
+          } else {
+            gc.fillStyle =
+              (row + col) % 2 === 0 ? theme.bg : shadeColor(theme.bg, 8);
+            gc.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+            drawGroundCell(
+              gc,
+              x,
+              y,
+              CELL_SIZE,
+              mapStyle,
+              theme,
+              row,
+              col,
+              staticTick,
+            );
+          }
+          gc.strokeStyle = isPath ? theme.pathBorder : "rgba(255,255,255,0.03)";
+          gc.lineWidth = 0.5;
+          gc.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+        }
+      }
+
+      // Scanline overlay baked in once
+      gc.fillStyle = "rgba(0,0,0,0.06)";
+      for (let sy = 0; sy < H; sy += 4) gc.fillRect(0, sy, W, 1);
+
+      this._gridDirty = false;
+      this._lastMapKey = engine._currentMapKey;
+      this._lastTowerCount = engine.towers.length;
+      this._lastSecondPathSize = secondPathSize;
     }
 
-    // scanline overlay — every 2 rows, faint dark line
-    ctx.fillStyle = "rgba(0,0,0,0.06)";
-    for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
+    // Blit the cached grid in a single drawImage call
+    ctx.drawImage(this._gridCanvas, 0, 0);
 
     // ── Path direction arrows ─────────────────────────────────────────────────
     ctx.save();

@@ -14,7 +14,12 @@ export class VisualEffectsSystem {
 
   addParticles(x, y, color, count) {
     const { particles } = this.engine;
-    for (let i = 0; i < count; i++) {
+    // Hard cap: never exceed 400 particles total. When near cap, scale down count.
+    const cap = 400;
+    const current = particles.length;
+    if (current >= cap) return;
+    const allowed = Math.min(count, cap - current);
+    for (let i = 0; i < allowed; i++) {
       const a = Math.random() * Math.PI * 2;
       const s = Math.random() * 3.5 + 1;
       particles.push({
@@ -31,10 +36,16 @@ export class VisualEffectsSystem {
   }
 
   addFloatingText(x, y, text, color) {
-    this.engine.floatingTexts.push({ x, y, text, color, life: 75, vy: -0.85 });
+    const { floatingTexts } = this.engine;
+    // Cap at 60 floating texts — old ones scroll off anyway
+    if (floatingTexts.length >= 60) floatingTexts.shift();
+    floatingTexts.push({ x, y, text, color, life: 75, vy: -0.85 });
   }
 
   addDamageNumber(x, y, damage, towerType) {
+    const { floatingTexts } = this.engine;
+    // Skip damage numbers when already saturated — they're cosmetic only
+    if (floatingTexts.length >= 55) return;
     const dmgColors = {
       basic: "#86efac",
       sniper: "#38bdf8",
@@ -50,7 +61,7 @@ export class VisualEffectsSystem {
     const dmgFloor = Math.floor(damage);
     if (dmgFloor < 5) return; // skip tiny chip damage numbers
     const fontSize = Math.min(8 + Math.sqrt(dmgFloor) * 0.4, 14);
-    this.engine.floatingTexts.push({
+    floatingTexts.push({
       x: x + (Math.random() - 0.5) * 12,
       y,
       text: dmgFloor.toString(),
@@ -62,6 +73,8 @@ export class VisualEffectsSystem {
   }
 
   addBolt(x1, y1, x2, y2, color) {
+    // Cap bolt effects — tesla chains can generate hundreds per frame
+    if (this.engine.boltEffects.length >= 80) return;
     this.engine.boltEffects.push({
       x1,
       y1,

@@ -328,6 +328,11 @@ export class RenderSystem {
       const isSelected =
         engine.selectedTowerCell?.col === tower.col &&
         engine.selectedTowerCell?.row === tower.row;
+
+      // Resolve skin color once — used for border, glow ring, range ring
+      const skinTowerDef = engine.activeSkin?.towers?.[tower.type];
+      const towerColor = skinTowerDef?.color || tower.color;
+
       ctx.arc(
         cx,
         cy,
@@ -360,7 +365,7 @@ export class RenderSystem {
       ctx.fill();
 
       // selection/color border
-      ctx.strokeStyle = isSelected ? "#ffffff" : tower.color;
+      ctx.strokeStyle = isSelected ? "#ffffff" : towerColor;
       ctx.lineWidth = isSelected ? 2.5 : 1.5;
       roundRect(
         ctx,
@@ -396,7 +401,7 @@ export class RenderSystem {
       const coolPct = 1 - tower.cooldown / tower.fireRate;
       if (coolPct > 0.85) {
         ctx.globalAlpha = ((coolPct - 0.85) / 0.15) * 0.4;
-        ctx.fillStyle = tower.color;
+        ctx.fillStyle = towerColor;
         ctx.beginPath();
         ctx.arc(0, 0, 11, 0, Math.PI * 2);
         ctx.fill();
@@ -410,18 +415,18 @@ export class RenderSystem {
       if (isSelected) {
         ctx.beginPath();
         ctx.arc(cx, cy, tower.range, 0, Math.PI * 2);
-        ctx.strokeStyle = tower.color + "55";
+        ctx.strokeStyle = towerColor + "55";
         ctx.lineWidth = 1;
         ctx.setLineDash([5, 5]);
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.beginPath();
         ctx.arc(cx, cy, tower.range, 0, Math.PI * 2);
-        ctx.fillStyle = tower.color + "08";
+        ctx.fillStyle = towerColor + "08";
         ctx.fill();
       }
 
-      drawTowerSkillAuras(ctx, tower, engine.tick);
+      drawTowerSkillAuras(ctx, tower, engine.tick, engine.activeSkin);
 
       // tier badge
       {
@@ -689,6 +694,16 @@ export class RenderSystem {
     }
 
     // ── ENEMIES ───────────────────────────────────────────────────────────────
+    // Pre-compute missile-locked enemy IDs once (avoids O(enemies*projectiles) scan)
+    const missileLockedIds = new Set();
+    for (const p of engine.projectiles) {
+      if (p.towerType === "missile" && p.homing && p.targetId) {
+        missileLockedIds.add(p.targetId);
+      }
+    }
+    // Pre-compute counter-missing tower types once
+    const towerTypeSet = new Set(engine.towers.map((t) => t.type));
+
     for (const enemy of engine.enemies) {
       ctx.save();
       ctx.globalAlpha = enemy.stealth ? 0.38 : 1;
@@ -750,10 +765,7 @@ export class RenderSystem {
       ctx.globalAlpha = 1;
 
       // counter warning
-      if (
-        enemy.requiresCounter &&
-        !engine.towers.some((t) => t.type === enemy.requiresCounter)
-      ) {
+      if (enemy.requiresCounter && !towerTypeSet.has(enemy.requiresCounter)) {
         ctx.fillStyle = "#ef4444";
         ctx.font = "bold 8px monospace";
         ctx.textAlign = "center";
@@ -769,9 +781,7 @@ export class RenderSystem {
       }
 
       // Missile lock-on indicator
-      const isLocked = engine.projectiles.some(
-        (p) => p.towerType === "missile" && p.homing && p.targetId === enemy.id,
-      );
+      const isLocked = missileLockedIds.has(enemy.id);
       if (isLocked) {
         ctx.save();
         ctx.strokeStyle = "#f43f5e";

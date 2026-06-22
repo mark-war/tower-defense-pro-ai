@@ -172,7 +172,10 @@ export function drawGroundCell(ctx, x, y, size, style, theme, row, col, tick) {
 // ── Entity renderers ──────────────────────────────────────────────────────────
 
 export function drawTowerShape(ctx, tower, tick, activeSkin) {
-  const c = tower.color;
+  // Resolve skin overrides at draw time — supports mid-game skin switching
+  const skinTower = activeSkin?.towers?.[tower.type];
+  const c = skinTower?.color || tower.color;
+  const icon = skinTower?.icon || tower.icon || "🗼";
   const s = CELL_SIZE * 0.38;
 
   // Recoil: push tower body opposite to firing direction
@@ -189,8 +192,9 @@ export function drawTowerShape(ctx, tower, tick, activeSkin) {
     );
   }
 
-  ctx.shadowColor = c;
-  ctx.shadowBlur = 10;
+  // shadowBlur is GPU-expensive — skip it entirely for tower bodies
+  // The colored border already provides visual identity without the cost
+  ctx.shadowBlur = 0;
 
   ctx.globalAlpha = 0.2;
   ctx.fillStyle = c;
@@ -231,7 +235,7 @@ export function drawTowerShape(ctx, tower, tick, activeSkin) {
   ctx.font = `${CELL_SIZE * 0.62}px serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(tower.icon || "🗼", 0, 1);
+  ctx.fillText(icon, 0, 1);
   ctx.shadowBlur = 0;
 }
 
@@ -239,11 +243,13 @@ export function drawTowerShape(ctx, tower, tick, activeSkin) {
  * Ongoing skill auras around a tower (cyclone ring, hellgate fire, etc.).
  * Call after drawTowerShape, in world coordinates (tower.x / tower.y).
  */
-export function drawTowerSkillAuras(ctx, tower, tick) {
+export function drawTowerSkillAuras(ctx, tower, tick, activeSkin) {
   const specials = tower.specials;
   if (!specials?.length) return;
 
-  const { x, y, range, color } = tower;
+  const { x, y, range } = tower;
+  // Respect skin color override if present
+  const color = activeSkin?.towers?.[tower.type]?.color || tower.color;
   const has = (id) => specials.includes(id);
 
   // ── Vortex: Cyclone — spinning dashed ring + orbiting dots ───────────────
@@ -265,7 +271,13 @@ export function drawTowerSkillAuras(ctx, tower, tick) {
       ctx.globalAlpha = 0.7;
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(x + Math.cos(a) * spinRadius, y + Math.sin(a) * spinRadius, 4, 0, Math.PI * 2);
+      ctx.arc(
+        x + Math.cos(a) * spinRadius,
+        y + Math.sin(a) * spinRadius,
+        4,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
     }
     ctx.restore();
@@ -328,7 +340,10 @@ export function drawTowerSkillAuras(ctx, tower, tick) {
   // ── Vortex: Reality Fold — warp pulse every 6s ───────────────────────────
   if (has("realityFold")) {
     const phase = (tick % 360) / 360;
-    const warp = 0.15 + 0.35 * (phase < 0.15 ? phase / 0.15 : phase > 0.85 ? (1 - phase) / 0.15 : 0);
+    const warp =
+      0.15 +
+      0.35 *
+        (phase < 0.15 ? phase / 0.15 : phase > 0.85 ? (1 - phase) / 0.15 : 0);
     if (warp > 0.05) {
       ctx.save();
       ctx.globalAlpha = warp;
@@ -391,7 +406,13 @@ export function drawTowerSkillAuras(ctx, tower, tick) {
       const a = tick * 0.06 + i * (Math.PI / 2);
       ctx.fillStyle = `rgba(251,146,60,${0.4 + 0.3 * Math.sin(tick * 0.2 + i)})`;
       ctx.beginPath();
-      ctx.arc(x + Math.cos(a) * range * 0.6, y + Math.sin(a) * range * 0.6, 3, 0, Math.PI * 2);
+      ctx.arc(
+        x + Math.cos(a) * range * 0.6,
+        y + Math.sin(a) * range * 0.6,
+        3,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
     }
     ctx.restore();
@@ -431,8 +452,19 @@ export function drawTowerSkillAuras(ctx, tower, tick) {
   }
 
   // ── Tesla: arc / storm — electric orbit sparks ───────────────────────────
-  if (has("arcPulse") || has("ballLightning") || has("stormGod") || has("zeusProtocol")) {
-    const count = has("zeusProtocol") ? 6 : has("stormGod") ? 5 : has("ballLightning") ? 4 : 3;
+  if (
+    has("arcPulse") ||
+    has("ballLightning") ||
+    has("stormGod") ||
+    has("zeusProtocol")
+  ) {
+    const count = has("zeusProtocol")
+      ? 6
+      : has("stormGod")
+        ? 5
+        : has("ballLightning")
+          ? 4
+          : 3;
     const orbitR = range * (has("ballLightning") ? 0.55 : 0.7);
     ctx.save();
     for (let i = 0; i < count; i++) {
@@ -443,7 +475,13 @@ export function drawTowerSkillAuras(ctx, tower, tick) {
       ctx.shadowColor = "#fbbf24";
       ctx.shadowBlur = has("ballLightning") ? 8 : 4;
       ctx.beginPath();
-      ctx.arc(x + Math.cos(a) * orbitR, y + Math.sin(a) * orbitR, spark, 0, Math.PI * 2);
+      ctx.arc(
+        x + Math.cos(a) * orbitR,
+        y + Math.sin(a) * orbitR,
+        spark,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
     }
     ctx.shadowBlur = 0;
@@ -451,7 +489,12 @@ export function drawTowerSkillAuras(ctx, tower, tick) {
   }
 
   // ── Freeze: ice aura ─────────────────────────────────────────────────────
-  if (has("iceAge") || has("globalSlow") || has("cryoStorm") || has("heatDeath")) {
+  if (
+    has("iceAge") ||
+    has("globalSlow") ||
+    has("cryoStorm") ||
+    has("heatDeath")
+  ) {
     const pulse = 0.2 + 0.12 * Math.sin(tick * 0.09);
     ctx.save();
     ctx.globalAlpha = pulse;
@@ -468,7 +511,13 @@ export function drawTowerSkillAuras(ctx, tower, tick) {
         ctx.globalAlpha = 0.35;
         ctx.fillStyle = "#e0f2fe";
         ctx.beginPath();
-        ctx.arc(x + Math.cos(a) * range * 0.5, y + Math.sin(a) * range * 0.5, 2, 0, Math.PI * 2);
+        ctx.arc(
+          x + Math.cos(a) * range * 0.5,
+          y + Math.sin(a) * range * 0.5,
+          2,
+          0,
+          Math.PI * 2,
+        );
         ctx.fill();
       }
     }
@@ -509,7 +558,13 @@ export function drawTowerSkillAuras(ctx, tower, tick) {
       const a = tick * 0.07;
       ctx.fillStyle = "#78716c";
       ctx.beginPath();
-      ctx.arc(x + Math.cos(a) * range * 0.65, y + Math.sin(a) * range * 0.65, 3, 0, Math.PI * 2);
+      ctx.arc(
+        x + Math.cos(a) * range * 0.65,
+        y + Math.sin(a) * range * 0.65,
+        3,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
     }
     ctx.restore();
@@ -553,8 +608,11 @@ export function drawTowerSkillAuras(ctx, tower, tick) {
 export function drawEnemyShape(ctx, enemy, tick) {
   const r = enemy.size;
 
-  ctx.shadowColor = enemy.color;
-  ctx.shadowBlur = enemy.isBoss ? 16 : 8;
+  // shadowBlur is very expensive — only use it for bosses
+  if (enemy.isBoss) {
+    ctx.shadowColor = enemy.color;
+    ctx.shadowBlur = 16;
+  }
 
   if (enemy.isBoss) {
     const pulse = 0.3 + 0.2 * Math.sin(tick * 0.1);

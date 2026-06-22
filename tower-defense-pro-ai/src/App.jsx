@@ -871,6 +871,14 @@ export default function App() {
     engineRef.current?.toggleAutoRepair();
   }, []);
 
+  const handleToggleSfx = useCallback(() => {
+    engineRef.current?.toggleSfx();
+  }, []);
+
+  const handleToggleMusic = useCallback(() => {
+    engineRef.current?.toggleMusic();
+  }, []);
+
   const getCursor = () => {
     if (gameState?.paused) return "default";
     if (sellMode) return "cell";
@@ -1776,6 +1784,60 @@ export default function App() {
                           🔧 AUTO {gameState.autoRepair ? "ON" : "OFF"}
                         </button>
 
+                        {/* SFX toggle */}
+                        <button
+                          onClick={handleToggleSfx}
+                          style={{
+                            padding: "5px 8px",
+                            background: gameState.sfxEnabled
+                              ? "rgba(56,189,248,0.12)"
+                              : "rgba(6,6,16,0.88)",
+                            border: `1px solid ${gameState.sfxEnabled ? "#38bdf8" : "#334155"}`,
+                            borderRadius: 5,
+                            color: gameState.sfxEnabled ? "#38bdf8" : "#475569",
+                            fontFamily: mono,
+                            fontSize: 9,
+                            cursor: "pointer",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            gap: 1,
+                          }}
+                        >
+                          <span>{gameState.sfxEnabled ? "🔊" : "🔇"}</span>
+                          <span style={{ fontSize: 7, color: "#475569" }}>
+                            SFX
+                          </span>
+                        </button>
+
+                        {/* Music toggle */}
+                        <button
+                          onClick={handleToggleMusic}
+                          style={{
+                            padding: "5px 8px",
+                            background: gameState.musicEnabled
+                              ? "rgba(167,139,250,0.12)"
+                              : "rgba(6,6,16,0.88)",
+                            border: `1px solid ${gameState.musicEnabled ? "#a78bfa" : "#334155"}`,
+                            borderRadius: 5,
+                            color: gameState.musicEnabled
+                              ? "#a78bfa"
+                              : "#475569",
+                            fontFamily: mono,
+                            fontSize: 9,
+                            cursor: "pointer",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            gap: 1,
+                          }}
+                        >
+                          <span>{gameState.musicEnabled ? "🎵" : "🎵"}</span>
+                          <span style={{ fontSize: 7, color: "#475569" }}>
+                            MUS
+                          </span>
+                        </button>
+
                         <button
                           onClick={handlePause}
                           style={{
@@ -1899,6 +1961,10 @@ export default function App() {
         hudVisible={isMobile ? hudVisible : true}
         onCloseHud={() => setHudVisible(false)}
         hudRef={hudRef}
+        onToggleSfx={handleToggleSfx}
+        onToggleMusic={handleToggleMusic}
+        sfxEnabled={gameState?.sfxEnabled !== false}
+        musicEnabled={gameState?.musicEnabled !== false}
       />
     </div>
   );

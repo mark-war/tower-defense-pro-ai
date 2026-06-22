@@ -220,7 +220,19 @@ export class GameEngine {
     this._secondPath = null;
 
     this.activeSkin = SKINS.default;
+
+    // ── AUDIO SETTINGS — persist across resets via localStorage ──────────────
+    // Only read from localStorage on very first construction (flags undefined)
+    if (this._sfxEnabled === undefined) {
+      this._sfxEnabled = localStorage.getItem("td_sfx") !== "false";
+    }
+    if (this._musicEnabled === undefined) {
+      this._musicEnabled = localStorage.getItem("td_music") !== "false";
+    }
     this.audio = new AudioEngine();
+    // Apply persisted settings immediately
+    this.audio.sfxEnabled = this._sfxEnabled !== false;
+    this.audio.musicEnabled = this._musicEnabled !== false;
 
     this._aiTaunt = null; // current taunt text to display
     this._aiTauntTimer = 0; // frames left to display taunt
@@ -252,7 +264,29 @@ export class GameEngine {
 
   setSkin(skinId) {
     this.activeSkin = SKINS[skinId] || SKINS.default;
+    this.renderSystem?.invalidateGrid();
     this._emitState();
+  }
+
+  toggleSfx() {
+    this._sfxEnabled = !this._sfxEnabled;
+    localStorage.setItem("td_sfx", this._sfxEnabled);
+    // Tell the AudioEngine — it checks this flag before playing any sound effect
+    if (this.audio) this.audio.sfxEnabled = this._sfxEnabled;
+    this._emitState();
+    return this._sfxEnabled;
+  }
+
+  toggleMusic() {
+    this._musicEnabled = !this._musicEnabled;
+    localStorage.setItem("td_music", this._musicEnabled);
+    if (this.audio) {
+      this.audio.musicEnabled = this._musicEnabled;
+      // If music is now disabled, stop any currently playing music
+      if (!this._musicEnabled) this.audio.stopMusic?.();
+    }
+    this._emitState();
+    return this._musicEnabled;
   }
 
   toggleAutoRepair() {
@@ -555,6 +589,8 @@ export class GameEngine {
       continueCount: this.continueCount || 0,
       livesOnContinue: ADMIN_CONFIG.continueSystem.livesOnContinue,
       lastWaveHeroTower: this.lastWaveHeroTower || null,
+      sfxEnabled: this._sfxEnabled !== false,
+      musicEnabled: this._musicEnabled !== false,
     });
   }
 

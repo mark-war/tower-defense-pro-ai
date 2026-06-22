@@ -92,6 +92,7 @@ export class TowerSystem {
     engine.waveAI.recordTowerPlacement(type, { col, row });
     engine.vfx.addParticles(tower.x, tower.y, tDef.color, 10);
     engine.synergySystem.check();
+    engine.renderSystem?.invalidateGrid();
     engine.audio?.playTowerPlace();
     engine._emitState();
     return true;
@@ -122,6 +123,7 @@ export class TowerSystem {
       engine.selectedTowerCell = null;
 
     engine.synergySystem.check();
+    engine.renderSystem?.invalidateGrid();
     engine._emitState();
   }
 

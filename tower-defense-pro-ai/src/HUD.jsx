@@ -50,6 +50,10 @@ export function HUD({
   hudVisible = true,
   onCloseHud,
   hudRef,
+  onToggleSfx,
+  onToggleMusic,
+  sfxEnabled = true,
+  musicEnabled = true,
 }) {
   const [confirmLevel, setConfirmLevel] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -518,6 +522,59 @@ export function HUD({
             📂 LOAD
             <div style={{ fontSize: 8, color: "#475569" }}>
               {hasSave ? "save exists" : "no save"}
+            </div>
+          </button>
+        </div>
+
+        {/* ── SFX / Music toggles ─────────────────────────────────────────── */}
+        <div style={{ display: "flex", gap: 5, marginTop: 5 }}>
+          <button
+            onClick={onToggleSfx}
+            title="Toggle sound effects"
+            style={{
+              flex: 1,
+              padding: "5px 4px",
+              border: `1px solid ${sfxEnabled ? "#38bdf8" : "#334155"}`,
+              borderRadius: 4,
+              background: sfxEnabled ? "#0a1a2a" : "#111827",
+              color: sfxEnabled ? "#38bdf8" : "#475569",
+              fontFamily: mono,
+              fontSize: 10,
+              cursor: "pointer",
+              textAlign: "center",
+            }}
+          >
+            {sfxEnabled ? "🔊" : "🔇"} SFX
+            <div
+              style={{ fontSize: 8, color: sfxEnabled ? "#38bdf8" : "#374151" }}
+            >
+              {sfxEnabled ? "ON" : "OFF"}
+            </div>
+          </button>
+          <button
+            onClick={onToggleMusic}
+            title="Toggle music"
+            style={{
+              flex: 1,
+              padding: "5px 4px",
+              border: `1px solid ${musicEnabled ? "#a78bfa" : "#334155"}`,
+              borderRadius: 4,
+              background: musicEnabled ? "#1a0a2e" : "#111827",
+              color: musicEnabled ? "#a78bfa" : "#475569",
+              fontFamily: mono,
+              fontSize: 10,
+              cursor: "pointer",
+              textAlign: "center",
+            }}
+          >
+            🎵 MUSIC
+            <div
+              style={{
+                fontSize: 8,
+                color: musicEnabled ? "#a78bfa" : "#374151",
+              }}
+            >
+              {musicEnabled ? "ON" : "OFF"}
             </div>
           </button>
         </div>

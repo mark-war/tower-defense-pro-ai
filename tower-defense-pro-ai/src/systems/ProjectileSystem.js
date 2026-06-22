@@ -36,7 +36,9 @@ export class ProjectileSystem {
       vx: (dx / dist) * tower.projectileSpeed,
       vy: (dy / dist) * tower.projectileSpeed,
       damage: tower.damage * dmgMult,
-      color: tower.projectileColor,
+      color:
+        engine.activeSkin?.towers?.[tower.type]?.projectileColor ||
+        tower.projectileColor,
       splash: tower.splash || 0,
       slowFactor: tower.slowFactor || 0,
       slowDuration: tower.slowDuration || 0,

@@ -337,6 +337,9 @@ export class WaveSystem {
 
     engine.audio?.onWaveComplete(engine.wave);
 
+    // Gold Market wave-clear hooks (war bond payout, arms deal cleanup, etc.)
+    engine.goldMarket?.onWaveClear(engine.waveLeaks);
+
     // Partial auto-repair between waves (20% HP restored, re-enable disabled)
     for (const tower of engine.towers) {
       const healed = tower.maxHp * 0.2;

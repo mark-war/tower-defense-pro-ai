@@ -197,6 +197,31 @@ export default function App() {
     }
   }, [gameState?.state, gameState?.wave]);
 
+  // Load saved skin preference (safe version)
+  useEffect(() => {
+    const savedSkin = localStorage.getItem("towerDefense_activeSkin");
+    if (!savedSkin) return;
+
+    const engine = engineRef.current;
+    if (!engine?.setActiveSkin) return;
+
+    // Apply to engine first
+    const success = engine.setActiveSkin(savedSkin);
+
+    if (success) {
+      // Use setTimeout to avoid synchronous setState in effect
+      setTimeout(() => {
+        setGameState((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            activeSkinId: savedSkin,
+          };
+        });
+      }, 0);
+    }
+  }, []); // Empty dependency array is fine here
+
   // ── Mobile Resize ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const handleResize = () => {
@@ -580,6 +605,43 @@ export default function App() {
     setTimeout(() => setSaveToast(""), 2200);
   }, [profileName, playerProfile]);
 
+  // ────────────────────────────────────────────────────────────────────────────
+  const handleBuyMarketItem = useCallback((itemId) => {
+    engineRef.current?.buyMarketItem(itemId);
+  }, []);
+
+  // ────────────────────────────────────────────────────────────────────────────
+  const handleCancelOvercharge = useCallback(() => {
+    engineRef.current?.cancelPendingOvercharge();
+  }, []);
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // SKIN HANDLER
+  const handleSetSkin = useCallback((skinId) => {
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    // Tell the engine to switch skin (this should update visuals immediately)
+    const success = engine.setActiveSkin?.(skinId);
+
+    if (success) {
+      // Update React state so HUD reflects the change instantly
+      setGameState((prev) => ({
+        ...prev,
+        activeSkinId: skinId,
+      }));
+
+      // Optional: Persist choice across refreshes
+      try {
+        localStorage.setItem("towerDefense_activeSkin", skinId);
+      } catch (e) {
+        console.warn("Failed to save skin preference", e);
+      }
+    } else {
+      console.warn(`Skin "${skinId}" could not be applied`);
+    }
+  }, []);
+
   // ── Pause ─────────────────────────────────────────────────────────────────────
   const handlePause = useCallback(() => {
     engineRef.current?.togglePause();
@@ -639,6 +701,13 @@ export default function App() {
       }
 
       const { col, row } = getCell(e);
+
+      // Overcharge targeting mode — click a tower to apply
+      if (gameState?.goldMarket?.pendingOvercharge) {
+        engineRef.current.tryApplyOvercharge(col, row);
+        return;
+      }
+
       if (sellMode) {
         engineRef.current.sellTower(col, row);
       } else if (activeTab === "upgrade") {
@@ -673,6 +742,7 @@ export default function App() {
       getCell,
       gameState?.state,
       gameState?.paused,
+      gameState?.goldMarket,
       showBottomBar,
     ],
   );
@@ -1965,6 +2035,9 @@ export default function App() {
         onToggleMusic={handleToggleMusic}
         sfxEnabled={gameState?.sfxEnabled !== false}
         musicEnabled={gameState?.musicEnabled !== false}
+        onBuyMarketItem={handleBuyMarketItem}
+        onCancelOvercharge={handleCancelOvercharge}
+        onSetSkin={handleSetSkin}
       />
     </div>
   );
@@ -2459,33 +2532,39 @@ function CanvasTowerCard({
   const hpPct = tower.hp / tower.maxHp;
   const atkPerSec = (60 / Math.max(1, tower.fireRate)).toFixed(1);
 
-  const tierLabel = tower.legendary100Unlocked
-    ? "✦✦ L100"
-    : tower.legendaryUnlocked
-      ? "✦ L50"
-      : tower.skill10chosen
-        ? "T2"
-        : tower.skill5chosen
-          ? "T1"
-          : `P${tower.passiveTier}`;
-  const tierColor = tower.legendary100Unlocked
-    ? "#ef4444"
-    : tower.legendaryUnlocked
-      ? "#f59e0b"
-      : tower.skill10chosen
-        ? "#fbbf24"
-        : tower.skill5chosen
-          ? "#38bdf8"
-          : "#64748b";
-  const tierBg = tower.legendary100Unlocked
-    ? "#450a0a"
-    : tower.legendaryUnlocked
-      ? "#451a03"
-      : tower.skill10chosen
-        ? "#1a1400"
-        : tower.skill5chosen
-          ? "#0a1a2a"
-          : "#1e293b";
+  const tierLabel = tower.ascension200Unlocked
+    ? "☄ A200"
+    : tower.legendary100Unlocked
+      ? "✦✦ L100"
+      : tower.legendaryUnlocked
+        ? "✦ L50"
+        : tower.skill10chosen
+          ? "T2"
+          : tower.skill5chosen
+            ? "T1"
+            : `P${tower.passiveTier}`;
+  const tierColor = tower.ascension200Unlocked
+    ? "#c084fc"
+    : tower.legendary100Unlocked
+      ? "#ef4444"
+      : tower.legendaryUnlocked
+        ? "#f59e0b"
+        : tower.skill10chosen
+          ? "#fbbf24"
+          : tower.skill5chosen
+            ? "#38bdf8"
+            : "#64748b";
+  const tierBg = tower.ascension200Unlocked
+    ? "#1a0a2e"
+    : tower.legendary100Unlocked
+      ? "#450a0a"
+      : tower.legendaryUnlocked
+        ? "#451a03"
+        : tower.skill10chosen
+          ? "#1a1400"
+          : tower.skill5chosen
+            ? "#0a1a2a"
+            : "#1e293b";
 
   const dmgTypeColor =
     def.damageType === "magical"
@@ -2537,6 +2616,21 @@ function CanvasTowerCard({
         options: [upgDef.legendary100?.A, upgDef.legendary100?.B],
         paths: ["A", "B"],
         scaledCost: cost,
+      };
+    }
+    if (
+      tower.upgradeReadyType === "ascension200" &&
+      !tower.ascension200Unlocked
+    ) {
+      const cost = Math.floor(
+        (upgDef.ascension200?.A?.cost || 0) * (1 + wave * 0.08) + gold * 0.1,
+      );
+      return {
+        type: "ascension200",
+        options: [upgDef.ascension200?.A, upgDef.ascension200?.B],
+        paths: ["A", "B"],
+        scaledCost: cost,
+        isAscension: true,
       };
     }
     return null;
@@ -2902,6 +2996,11 @@ function CanvasTowerCard({
               if (!opt) return null;
               const cost = nextUpgrade.scaledCost ?? opt.cost;
               const canBuy = gold >= cost;
+              const accentColor = nextUpgrade.isAscension
+                ? "#c084fc"
+                : "#fbbf24";
+              const accentBg = nextUpgrade.isAscension ? "#1a0a2e" : "#1a1a0a";
+              const textColor = nextUpgrade.isAscension ? "#e9d5ff" : "#fde68a";
               return (
                 <button
                   key={i}
@@ -2917,11 +3016,11 @@ function CanvasTowerCard({
                   style={{
                     flex: 1,
                     padding: "10px 10px",
-                    background: canBuy ? "#1a1a0a" : "#1e293b",
-                    border: `1px solid ${canBuy ? "#fbbf24" : "#1e293b"}`,
+                    background: canBuy ? accentBg : "#1e293b",
+                    border: `1px solid ${canBuy ? accentColor : "#1e293b"}`,
                     borderRadius: 8,
                     fontFamily: mono,
-                    color: canBuy ? "#fde68a" : "#374151",
+                    color: canBuy ? textColor : "#374151",
                     cursor: canBuy ? "pointer" : "not-allowed",
                     textAlign: "left",
                   }}

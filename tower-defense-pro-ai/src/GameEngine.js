@@ -29,6 +29,7 @@ import { TowerSystem } from "./systems/TowerSystem.js";
 import { ProjectileSystem } from "./systems/ProjectileSystem.js";
 import { WaveSystem } from "./systems/WaveSystem.js";
 import { RenderSystem } from "./systems/RenderSystem.js";
+import { GoldMarket } from "./GoldMarket.js";
 
 const VCFG = ADMIN_CONFIG.visual;
 const ECFG = ADMIN_CONFIG.economy;
@@ -219,7 +220,7 @@ export class GameEngine {
     this.secondSpawnCamp = null;
     this._secondPath = null;
 
-    this.activeSkin = SKINS.default;
+    this.activeSkin = SKINS.medieval;
 
     // ── AUDIO SETTINGS — persist across resets via localStorage ──────────────
     // Only read from localStorage on very first construction (flags undefined)
@@ -251,6 +252,7 @@ export class GameEngine {
     this.projectileSystem = new ProjectileSystem(this);
     this.waveSystem = new WaveSystem(this);
     this.renderSystem = new RenderSystem(this);
+    this.goldMarket = new GoldMarket(this);
   }
 
   toggleFastForward() {
@@ -262,10 +264,24 @@ export class GameEngine {
     return this.speedMultiplier;
   }
 
-  setSkin(skinId) {
-    this.activeSkin = SKINS[skinId] || SKINS.default;
-    this.renderSystem?.invalidateGrid();
+  setActiveSkin(skinId) {
+    const skin = SKINS[skinId];
+    if (!skin) {
+      console.warn(`Skin "${skinId}" not found`);
+      return false;
+    }
+
+    this.activeSkin = skin;
+    this.activeSkinId = skinId; // ← important for consistency
+
+    // Re-render map and towers
+    this.renderSystem?.invalidateGrid?.();
+
+    // Optional: Force immediate redraw
+    this.draw?.(); // or this.renderSystem.draw();
+
     this._emitState();
+    return true;
   }
 
   toggleSfx() {
@@ -591,6 +607,8 @@ export class GameEngine {
       lastWaveHeroTower: this.lastWaveHeroTower || null,
       sfxEnabled: this._sfxEnabled !== false,
       musicEnabled: this._musicEnabled !== false,
+      goldMarket: this.goldMarket.getState() || null,
+      activeSkin: this.activeSkin?.id || "default",
     });
   }
 
@@ -697,6 +715,34 @@ export class GameEngine {
     }
     this._emitState();
     return true;
+  }
+
+  // ── Gold Market ────────────────────────────────────────────────────────────
+  buyMarketItem(itemId) {
+    return this.goldMarket?.buy(itemId) ?? false;
+  }
+
+  /** Called from App when user clicks a tower while overcharge is pending. */
+  tryApplyOvercharge(col, row) {
+    if (!this.goldMarket?.pendingOvercharge) return false;
+    const tower = this.grid[row]?.[col];
+    if (!tower) {
+      this.vfx.addFloatingText(
+        col * CELL_SIZE + CELL_SIZE / 2,
+        row * CELL_SIZE,
+        "No tower here!",
+        "#ef4444",
+      );
+      return false;
+    }
+    return this.goldMarket.applyOverchargeToTower(tower);
+  }
+
+  cancelPendingOvercharge() {
+    if (this.goldMarket) {
+      this.goldMarket.pendingOvercharge = false;
+      this._emitState();
+    }
   }
 
   forceGameOver() {

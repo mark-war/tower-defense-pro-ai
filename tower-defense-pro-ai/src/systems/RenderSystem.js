@@ -42,6 +42,12 @@ export class RenderSystem {
     this._gridDirty = true;
   }
 
+  /** Resolve effective tower color from active skin at draw time. */
+  _towerColor(tower) {
+    const skinTower = this.engine.activeSkin?.towers?.[tower.type];
+    return skinTower?.color || tower.color;
+  }
+
   draw() {
     const engine = this.engine;
     const ctx = engine.ctx;
@@ -365,7 +371,7 @@ export class RenderSystem {
       ctx.fill();
 
       // selection/color border
-      ctx.strokeStyle = isSelected ? "#ffffff" : towerColor;
+      ctx.strokeStyle = isSelected ? "#ffffff" : this._towerColor(tower);
       ctx.lineWidth = isSelected ? 2.5 : 1.5;
       roundRect(
         ctx,
@@ -376,6 +382,46 @@ export class RenderSystem {
         5,
       );
       ctx.stroke();
+
+      // ── Overcharge glow ──────────────────────────────────────────────────
+      if (tower._overchargeTimer > 0) {
+        const pulse = 0.5 + 0.5 * Math.abs(Math.sin(engine.tick * 0.3));
+        ctx.save();
+        ctx.globalAlpha = pulse * 0.7;
+        ctx.strokeStyle = "#fbbf24";
+        ctx.lineWidth = 3;
+        ctx.shadowColor = "#fbbf24";
+        ctx.shadowBlur = 14;
+        roundRect(
+          ctx,
+          tower.col * CELL_SIZE,
+          tower.row * CELL_SIZE,
+          CELL_SIZE,
+          CELL_SIZE,
+          7,
+        );
+        ctx.stroke();
+        ctx.restore();
+        // Small lightning sparks
+        for (let spark = 0; spark < 2; spark++) {
+          const sa = engine.tick * 0.25 + spark * Math.PI;
+          ctx.save();
+          ctx.globalAlpha = 0.8 * pulse;
+          ctx.fillStyle = "#fbbf24";
+          ctx.shadowColor = "#fbbf24";
+          ctx.shadowBlur = 6;
+          ctx.beginPath();
+          ctx.arc(
+            tower.x + Math.cos(sa) * (CELL_SIZE * 0.45),
+            tower.y + Math.sin(sa) * (CELL_SIZE * 0.45),
+            2.5,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+          ctx.restore();
+        }
+      }
 
       // upgrade-ready gold pulse
       if (tower.upgradeReady) {
@@ -401,7 +447,7 @@ export class RenderSystem {
       const coolPct = 1 - tower.cooldown / tower.fireRate;
       if (coolPct > 0.85) {
         ctx.globalAlpha = ((coolPct - 0.85) / 0.15) * 0.4;
-        ctx.fillStyle = towerColor;
+        ctx.fillStyle = this._towerColor(tower);
         ctx.beginPath();
         ctx.arc(0, 0, 11, 0, Math.PI * 2);
         ctx.fill();
@@ -430,17 +476,47 @@ export class RenderSystem {
 
       // tier badge
       {
-        const c = tower.color;
+        const c = this._towerColor(tower);
         const bx = tower.col * CELL_SIZE + CELL_SIZE - 7;
         const by = tower.row * CELL_SIZE + 7;
 
         // Determine badge tier
+        const hasL3 = tower.ascendedUnlocked;
         const hasL2 = tower.legendary100Unlocked;
-        const hasL1 = tower.legendaryUnlocked;
+        const hasL1 = tower.legendary50Unlocked;
         const hasT2 = tower.skill10chosen;
         const hasT1 = tower.skill5chosen;
 
-        if (hasL2) {
+        if (hasL3) {
+          // ✦✦ Ascended — purple star with pulse
+          const pulse = 0.7 + 0.3 * Math.sin(engine.tick * 0.15);
+          ctx.save();
+          ctx.globalAlpha = pulse;
+          ctx.shadowColor = "#8b5cf6";
+          if (!engine._isMobile) {
+            ctx.shadowColor = c;
+            ctx.shadowBlur = 10;
+          }
+          ctx.shadowBlur = 0;
+          // outer glow ring
+          ctx.strokeStyle = "#8b5cf6";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(bx, by, 8, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          // badge fill
+          ctx.fillStyle = "#433878";
+          ctx.beginPath();
+          ctx.arc(bx, by, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.restore();
+          ctx.font = "9px serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("✦", bx, by + 0.5);
+        } else if (hasL2) {
           // ✦✦ Legendary 100 — red star with pulse
           const pulse = 0.7 + 0.3 * Math.sin(engine.tick * 0.15);
           ctx.save();
@@ -587,14 +663,14 @@ export class RenderSystem {
       // cooldown bar
       if (tower.cooldown > 0) {
         const barW = (CELL_SIZE - 6) * (1 - tower.cooldown / tower.fireRate);
-        ctx.fillStyle = tower.color + "40";
+        ctx.fillStyle = this._towerColor(tower) + "40";
         ctx.fillRect(
           tower.col * CELL_SIZE + 3,
           tower.row * CELL_SIZE + CELL_SIZE - 5,
           CELL_SIZE - 6,
           3,
         );
-        ctx.fillStyle = tower.color;
+        ctx.fillStyle = this._towerColor(tower);
         ctx.fillRect(
           tower.col * CELL_SIZE + 3,
           tower.row * CELL_SIZE + CELL_SIZE - 5,
@@ -1189,6 +1265,41 @@ export class RenderSystem {
       ctx.fillStyle = "#475569";
       ctx.font = "13px monospace";
       ctx.fillText("Space / P  to resume", W / 2, H / 2 + 22);
+    }
+
+    // ── MERCENARIES (Gold Market) ─────────────────────────────────────────────
+    for (const merc of engine.goldMarket?.mercenaries || []) {
+      const lifePct = merc.timer / (60 * 20);
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, lifePct * 5); // fade in
+      // Shadow
+      ctx.shadowColor = "#f43f5e";
+      ctx.shadowBlur = 12;
+      // Body
+      ctx.fillStyle = "#f43f5e";
+      ctx.beginPath();
+      ctx.arc(merc.x, merc.y, 10, 0, Math.PI * 2);
+      ctx.fill();
+      // Icon
+      ctx.shadowBlur = 0;
+      ctx.font = "bold 14px serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("🗡️", merc.x, merc.y + 1);
+      // Timer ring
+      ctx.strokeStyle = "#f43f5e";
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.5 * lifePct;
+      ctx.beginPath();
+      ctx.arc(
+        merc.x,
+        merc.y,
+        14,
+        -Math.PI / 2,
+        -Math.PI / 2 + lifePct * Math.PI * 2,
+      );
+      ctx.stroke();
+      ctx.restore();
     }
 
     ctx.restore(); // pop shake transform

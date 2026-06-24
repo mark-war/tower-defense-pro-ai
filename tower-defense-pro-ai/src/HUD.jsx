@@ -12,9 +12,11 @@ import {
   SYNERGIES,
   ACHIEVEMENTS,
   ENEMY_EVOLUTIONS,
+  SKINS,
 } from "./gameConstants.js";
 import { getGlobalMemory } from "./WaveAI.js";
 import { formatSpecialTags, getSkillStackHints } from "./skillRegistry.js";
+import { GOLD_MARKET_ITEMS } from "./GoldMarket.js";
 
 const mono = "'Courier New', monospace";
 
@@ -54,6 +56,9 @@ export function HUD({
   onToggleMusic,
   sfxEnabled = true,
   musicEnabled = true,
+  onBuyMarketItem,
+  onCancelOvercharge,
+  onSetSkin,
 }) {
   const [confirmLevel, setConfirmLevel] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -2346,6 +2351,81 @@ export function HUD({
       {/* ════ TAB: LEVELS ═══════════════════════════════════════════════════ */}
       {activeTab === "levels" && (
         <div style={{ flex: 1, overflowY: "auto", padding: "9px 11px" }}>
+          {/* ── SKIN PICKER ──────────────────────────────────────────────── */}
+          <div style={{ marginBottom: 12 }}>
+            <div
+              style={{
+                fontSize: 9,
+                color: "#475569",
+                letterSpacing: "0.1em",
+                marginBottom: 6,
+              }}
+            >
+              🎨 VISUAL SKIN — changes instantly, any time
+            </div>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {Object.values(SKINS).map((skin) => {
+                const isActive =
+                  (gameState?.activeSkinId || gameState?.activeSkin) ===
+                  skin.id; // Pick a representative color for the swatch
+                const swatchColor =
+                  skin.towers?.basic?.color ||
+                  skin.maps?.valley?.accent ||
+                  "#4ade80";
+                return (
+                  <button
+                    key={skin.id}
+                    onClick={() => onSetSkin?.(skin.id)}
+                    title={skin.name}
+                    style={{
+                      flex: 1,
+                      minWidth: 60,
+                      padding: "7px 5px",
+                      background: isActive ? "#1e293b" : "#0d1117",
+                      border: `2px solid ${isActive ? swatchColor : "#1e293b"}`,
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      fontFamily: mono,
+                      textAlign: "center",
+                      transition: "border-color 0.15s",
+                    }}
+                  >
+                    {/* Color swatch dot */}
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: "50%",
+                        background: swatchColor,
+                        margin: "0 auto 4px",
+                        boxShadow: isActive ? `0 0 6px ${swatchColor}` : "none",
+                      }}
+                    />
+                    <div
+                      style={{
+                        fontSize: 9,
+                        color: isActive ? swatchColor : "#475569",
+                        fontWeight: isActive ? "bold" : "normal",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {skin.name}
+                    </div>
+                    {isActive && (
+                      <div
+                        style={{ fontSize: 7, color: "#64748b", marginTop: 2 }}
+                      >
+                        ACTIVE
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div
             style={{
               fontSize: 9,
@@ -2579,6 +2659,17 @@ export function HUD({
             )}
           </div>
         </div>
+      )}
+
+      {/* ════ TAB: MARKET ══════════════════════════════════════════════════ */}
+      {activeTab === "market" && (
+        <GoldMarketPanel
+          gameState={gameState}
+          gold={gold}
+          wave={wave}
+          onBuyMarketItem={onBuyMarketItem}
+          onCancelOvercharge={onCancelOvercharge}
+        />
       )}
 
       {/* Achievements */}
@@ -3293,7 +3384,7 @@ function UpgradePanel({ tower, onUpgrade, onRepairTower, gold, currentWave }) {
         </>
       )}
 
-      {a200 && tower.legendary100Unlocked && (
+      {a200 && (
         <>
           <div
             style={{
@@ -3605,6 +3696,284 @@ function EnemyInspectPanel({ enemy, onClose }) {
           Distance traveled: {enemy.distanceTraveled}px
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Gold Market Panel ────────────────────────────────────────────────────────
+function GoldMarketPanel({
+  gameState,
+  gold,
+  wave,
+  onBuyMarketItem,
+  onCancelOvercharge,
+}) {
+  const market = gameState?.goldMarket;
+  // const state = gameState?.state;
+
+  const getScaledCost = (item) =>
+    Math.floor(item.baseCost * (1 + wave * item.costScaling));
+
+  const canBuyItem = (item) => {
+    const cost = getScaledCost(item);
+    if (gold < cost) return false;
+    if (item.id === "war_bond" && market?.warBond) return false;
+    if (item.id === "dark_pact" && market?.darkPactUses >= 5) return false;
+    return true;
+  };
+
+  const marketEntries = Object.values(GOLD_MARKET_ITEMS);
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: "10px 11px" }}>
+      {/* Header */}
+      <div style={{ marginBottom: 12 }}>
+        <div
+          style={{
+            fontSize: 11,
+            color: "#facc15",
+            fontWeight: "bold",
+            marginBottom: 4,
+          }}
+        >
+          💰 GOLD MARKET
+        </div>
+        <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1.5 }}>
+          Spend excess gold on powerful one-wave effects. Effects become pricier
+          as waves progress.
+        </div>
+      </div>
+
+      {/* Active states */}
+      {market?.warBond && (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: "8px 10px",
+            background: "#061a06",
+            border: "1px solid #4ade80",
+            borderRadius: 6,
+          }}
+        >
+          <div style={{ fontSize: 9, color: "#475569", marginBottom: 3 }}>
+            ACTIVE WAR BOND
+          </div>
+          <div style={{ fontSize: 12, color: "#4ade80", fontWeight: "bold" }}>
+            🏦 {market.warBond.bet}g →{" "}
+            {market.warBond.bet * market.warBond.multiplier}g
+          </div>
+          <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>
+            Zero leaks this wave to collect!
+          </div>
+        </div>
+      )}
+
+      {market?.pendingOvercharge && (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: "8px 10px",
+            background: "#1a1400",
+            border: "2px solid #fbbf24",
+            borderRadius: 6,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 11, color: "#fbbf24", fontWeight: "bold" }}>
+              ⚡ Awaiting target...
+            </div>
+            <div style={{ fontSize: 9, color: "#64748b" }}>
+              Click a tower on the map
+            </div>
+          </div>
+          <button
+            onClick={onCancelOvercharge}
+            style={{
+              padding: "4px 8px",
+              background: "#1e293b",
+              border: "1px solid #475569",
+              borderRadius: 4,
+              color: "#94a3b8",
+              fontFamily: mono,
+              fontSize: 10,
+              cursor: "pointer",
+            }}
+          >
+            ✕ Cancel
+          </button>
+        </div>
+      )}
+
+      {market?.armsDealActive && (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: "7px 10px",
+            background: "#160a20",
+            border: "1px solid #e879f9",
+            borderRadius: 6,
+          }}
+        >
+          <div style={{ fontSize: 11, color: "#e879f9", fontWeight: "bold" }}>
+            🔫 Arms Deal Active
+          </div>
+          <div style={{ fontSize: 9, color: "#64748b" }}>
+            All towers: +1 chain, +25% range, +15% dmg this wave
+          </div>
+        </div>
+      )}
+
+      {market?.mercenaryCount > 0 && (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: "7px 10px",
+            background: "#1a0a0a",
+            border: "1px solid #f43f5e",
+            borderRadius: 6,
+          }}
+        >
+          <div style={{ fontSize: 11, color: "#f43f5e", fontWeight: "bold" }}>
+            🗡️ {market.mercenaryCount} Mercenary
+            {market.mercenaryCount > 1 ? "s" : ""} Active
+          </div>
+          {market.mercenaries?.map((m) => (
+            <div
+              key={m.id}
+              style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}
+            >
+              {Math.ceil(m.timer / 60)}s remaining · {m.damage} dmg/hit
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Market items */}
+      {marketEntries.map((item) => {
+        const cost = getScaledCost(item);
+        const canBuy = canBuyItem(item);
+        const isTaken = item.id === "war_bond" && market?.warBond;
+        const isMaxed = item.id === "dark_pact" && market?.darkPactUses >= 5;
+        const isPending = item.id === "overcharge" && market?.pendingOvercharge;
+
+        return (
+          <div
+            key={item.id}
+            style={{
+              marginBottom: 8,
+              padding: "10px 11px",
+              background: canBuy ? "#0d1117" : "#080c12",
+              border: `1px solid ${canBuy ? item.color + "66" : "#1e293b"}`,
+              borderRadius: 6,
+              opacity: isTaken || isMaxed ? 0.55 : 1,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 9 }}>
+              <span style={{ fontSize: 24, lineHeight: 1 }}>{item.icon}</span>
+              <div style={{ flex: 1 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 3,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: "bold",
+                      color: canBuy ? item.color : "#374151",
+                    }}
+                  >
+                    {item.name}
+                  </span>
+                  {item.id === "dark_pact" && market?.darkPactUses > 0 && (
+                    <span style={{ fontSize: 9, color: "#6b7280" }}>
+                      uses: {market.darkPactUses}/5
+                    </span>
+                  )}
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#6b7280",
+                    lineHeight: 1.45,
+                    marginBottom: 8,
+                  }}
+                >
+                  {item.desc}
+                </div>
+                <button
+                  onClick={() =>
+                    !isTaken &&
+                    !isMaxed &&
+                    !isPending &&
+                    canBuy &&
+                    onBuyMarketItem(item.id)
+                  }
+                  disabled={!canBuy || isTaken || isMaxed || isPending}
+                  style={{
+                    width: "100%",
+                    padding: "7px",
+                    background:
+                      canBuy && !isTaken && !isMaxed && !isPending
+                        ? `${item.color}22`
+                        : "#111827",
+                    border: `1px solid ${canBuy && !isTaken && !isMaxed && !isPending ? item.color : "#1e293b"}`,
+                    borderRadius: 4,
+                    color:
+                      canBuy && !isTaken && !isMaxed && !isPending
+                        ? item.color
+                        : "#374151",
+                    fontFamily: mono,
+                    fontSize: 11,
+                    fontWeight: "bold",
+                    cursor:
+                      canBuy && !isTaken && !isMaxed && !isPending
+                        ? "pointer"
+                        : "not-allowed",
+                    display: "flex",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <span>
+                    {isTaken
+                      ? "Bond active"
+                      : isMaxed
+                        ? "Max uses reached"
+                        : isPending
+                          ? "Awaiting target..."
+                          : `Buy ${item.name}`}
+                  </span>
+                  <span style={{ color: gold >= cost ? "#facc15" : "#374151" }}>
+                    {isMaxed ? "—" : `${cost}g`}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Dark pact diminishing returns warning */}
+      {market?.darkPactUses > 0 && (
+        <div
+          style={{
+            fontSize: 9,
+            color: "#475569",
+            textAlign: "center",
+            marginTop: 4,
+          }}
+        >
+          Dark Pact returns:{" "}
+          {Math.round(Math.max(20, 100 - (market.darkPactUses - 1) * 20))}%
+          (diminishes each use)
+        </div>
+      )}
     </div>
   );
 }

@@ -1663,7 +1663,12 @@ export default function App() {
                     {Object.entries(gameState.abilities || {}).map(
                       ([key, ab]) => {
                         const ready =
-                          ab.cooldownLeft === 0 && gameState.state === "wave";
+                          ab.cooldownLeft === 0 &&
+                          gameState?.state === "wave" &&
+                          gameState?.wave >=
+                            (ab.unlocksAtWave != undefined
+                              ? ab.unlocksAtWave
+                              : 0);
                         const pct = Math.max(
                           0,
                           1 - ab.cooldownLeft / ab.cooldown,

@@ -384,7 +384,7 @@ export class RenderSystem {
       ctx.stroke();
 
       // ── Overcharge glow ──────────────────────────────────────────────────
-      if (tower._overchargeTimer > 0) {
+      if (tower._overchargeActive) {
         const pulse = 0.5 + 0.5 * Math.abs(Math.sin(engine.tick * 0.3));
         ctx.save();
         ctx.globalAlpha = pulse * 0.7;
@@ -976,6 +976,42 @@ export class RenderSystem {
       ctx.save();
       drawProjectile(ctx, p, engine.tick);
       ctx.restore();
+    }
+
+    // ── MERCENARIES ───────────────────────────────────────────────────────────
+    if (engine.goldMarket?.mercenaries) {
+      for (const merc of engine.goldMarket.mercenaries) {
+        ctx.save();
+
+        // Body
+        ctx.fillStyle = "#f59e0b";
+        ctx.beginPath();
+        ctx.arc(merc.x, merc.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Outline
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Sword icon
+        ctx.font = "12px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#111827";
+        ctx.fillText("⚔", merc.x, merc.y);
+
+        // Lifetime bar
+        const pct = merc.life / merc.maxLife;
+
+        ctx.fillStyle = "#111827";
+        ctx.fillRect(merc.x - 10, merc.y - 16, 20, 3);
+
+        ctx.fillStyle = "#22c55e";
+        ctx.fillRect(merc.x - 10, merc.y - 16, 20 * pct, 3);
+
+        ctx.restore();
+      }
     }
 
     // ── TESLA BOLT EFFECTS ────────────────────────────────────────────────────

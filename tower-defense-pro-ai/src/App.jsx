@@ -9,6 +9,7 @@ import {
   TOWER_UPGRADES,
   ENEMY_TYPES,
   ADMIN_CONFIG,
+  MARKET_UNLOCK_WAVE,
 } from "./gameConstants.js";
 import MapSelectScreen from "./MapSelectScreen.jsx";
 
@@ -170,6 +171,18 @@ export default function App() {
   // ── Bottom Bar state ──────────────────────────────────────────────────────────
   const [bottomBarVisible, setBottomBarVisible] = useState(true);
   const bottomBarTimerRef = useRef(null);
+
+  const marketUnlocked = (gameState?.wave ?? 0) >= MARKET_UNLOCK_WAVE;
+
+  const hudTabs = [
+    { id: "build", icon: "🔨", label: "Build" },
+    { id: "upgrade", icon: "⬆️", label: "Upgrade" },
+
+    ...(marketUnlocked ? [{ id: "market", icon: "💰", label: "Market" }] : []),
+
+    { id: "intel", icon: "🧠", label: "Intel" },
+    { id: "levels", icon: "🗺️", label: "Levels" },
+  ];
 
   // ── Boot ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -558,6 +571,11 @@ export default function App() {
       if (code === HK.tabUpgrade) {
         e.preventDefault();
         setActiveTab("upgrade");
+        return;
+      }
+      if (code === HK.tabMarket) {
+        e.preventDefault();
+        setActiveTab("market");
         return;
       }
       if (code === HK.tabIntel) {
@@ -1608,15 +1626,11 @@ export default function App() {
                 <div
                   style={{ display: "flex", borderBottom: "1px solid #1e293b" }}
                 >
-                  {[
-                    { id: "build", icon: "🔨", label: "Build" },
-                    { id: "upgrade", icon: "⬆️", label: "Upgrade" },
-                    { id: "intel", icon: "🧠", label: "Intel" },
-                    { id: "levels", icon: "🗺️", label: "Levels" },
-                  ].map((tab) => {
+                  {hudTabs.map((tab) => {
                     const tabColors = {
                       build: "#4ade80",
                       upgrade: "#fbbf24",
+                      market: "#facc15",
                       intel: "#e879f9",
                       levels: "#38bdf8",
                     };

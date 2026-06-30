@@ -101,6 +101,15 @@ export class GoldMarket {
     if (itemId === "dark_pact" && this.darkPactUses >= 5)
       return { ok: false, reason: "Pact maxed (5 uses)" };
 
+    if (
+      (itemId === "overcharge" || itemId === "arms_deal") &&
+      engine.state !== "idle"
+    )
+      return { ok: false, reason: "Buy between waves only" };
+
+    if (itemId === "mercenary" && engine.state !== "wave")
+      return { ok: false, reason: "Buy during an active wave only" };
+
     return { ok: true, cost };
   }
 
@@ -198,11 +207,14 @@ export class GoldMarket {
     if (!this.pendingOvercharge) return false;
     this.pendingOvercharge = false;
 
-    tower._overchargeTimer = 60 * 20; // 20 seconds worth of ticks
-    tower._overchargeOrigDamage = tower.damage;
-    tower._overchargeOrigFireRate = tower.fireRate;
-    tower.damage *= 3;
-    tower.fireRate = Math.max(1, Math.round(tower.fireRate * 0.4));
+    // Multiplier-based (not snapshot-based) so it composes safely with
+    // fortify/XP passives that may also change tower.damage mid-wave,
+    // and is always cleanly removable by dividing back out.
+    if (!tower._overchargeActive) {
+      tower._overchargeActive = true;
+      tower.damage *= 3;
+      tower.fireRate = Math.max(1, Math.round(tower.fireRate * 0.4));
+    }
 
     this.engine.vfx.addFloatingText(
       tower.x,
@@ -232,18 +244,33 @@ export class GoldMarket {
   _spawnMercenary() {
     const engine = this.engine;
     const path = engine.path;
-    // Start at ~20% of path
-    const startIdx = Math.floor(path.length * 0.2);
+
+    // Spawn near the current enemy cluster (median pathIndex of live enemies)
+    // rather than a fixed 20%-of-path point — if bought mid-wave, enemies may
+    // have already walked past a fixed point, leaving the merc with nothing
+    // in range and making it look like it's "doing nothing".
+    let startIdx;
+    if (engine.enemies.length > 0) {
+      const indices = engine.enemies
+        .map((e) => e.pathIndex || 0)
+        .sort((a, b) => a - b);
+      startIdx = indices[Math.floor(indices.length / 2)]; // median
+      startIdx = Math.max(0, Math.min(path.length - 1, startIdx));
+    } else {
+      startIdx = Math.floor(path.length * 0.2);
+    }
+
+    const spawnPt = path[startIdx] || path[0];
     const merc = {
       id: Date.now() + Math.random(),
-      x: path[startIdx].x,
-      y: path[startIdx].y,
+      x: spawnPt.x,
+      y: spawnPt.y,
       pathIndex: startIdx,
       // Walk backwards (decreasing pathIndex toward 0)
       direction: -1,
-      speed: 1.2,
+      speed: 1.4,
       damage: 80 + engine.wave * 12,
-      range: 70,
+      range: 130, // generous — should always find nearby targets once on screen
       attackRate: 30,
       attackCooldown: 0,
       hp: 999999, // effectively unkillable
@@ -265,26 +292,6 @@ export class GoldMarket {
     const engine = this.engine;
     if (engine.state !== "wave") return;
 
-    // ── Tick overcharged towers
-    for (const tower of engine.towers) {
-      if (tower._overchargeTimer > 0) {
-        tower._overchargeTimer--;
-        if (tower._overchargeTimer === 0) {
-          // Restore original stats
-          tower.damage = tower._overchargeOrigDamage;
-          tower.fireRate = tower._overchargeOrigFireRate;
-          delete tower._overchargeOrigDamage;
-          delete tower._overchargeOrigFireRate;
-          engine.vfx.addFloatingText(
-            tower.x,
-            tower.y - 20,
-            "⚡ Overcharge ended",
-            "#94a3b8",
-          );
-        }
-      }
-    }
-
     // ── Tick mercenaries
     for (let i = this.mercenaries.length - 1; i >= 0; i--) {
       const merc = this.mercenaries[i];
@@ -303,6 +310,12 @@ export class GoldMarket {
 
       // Move along path
       const path = engine.path;
+      if (!path || path.length === 0) {
+        console.warn(
+          "[GoldMarket] mercenary update: engine.path missing/empty",
+        );
+        continue;
+      }
       const nextIdx = merc.pathIndex + merc.direction;
       if (nextIdx < 0 || nextIdx >= path.length) {
         merc.direction *= -1; // bounce
@@ -393,6 +406,22 @@ export class GoldMarket {
         );
       }
       this.warBond = null;
+    }
+
+    // ── Remove overcharge (divide multiplier back out — safe even if
+    //    fortify/XP passives changed tower.damage during the wave)
+    for (const tower of engine.towers) {
+      if (tower._overchargeActive) {
+        tower.damage /= 3;
+        tower.fireRate = Math.max(1, Math.round(tower.fireRate / 0.4));
+        delete tower._overchargeActive;
+        engine.vfx.addFloatingText(
+          tower.x,
+          tower.y - 20,
+          "⚡ Overcharge ended",
+          "#94a3b8",
+        );
+      }
     }
 
     // ── Remove arms deal buffs

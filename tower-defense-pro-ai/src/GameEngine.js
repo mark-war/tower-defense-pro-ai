@@ -471,6 +471,7 @@ export class GameEngine {
         }
         this.towerSystem.update();
         this.projectileSystem.update();
+        this.goldMarket.update();
         this.waveSystem.checkWaveComplete();
         if (this.state !== "wave") break;
       }

@@ -2029,8 +2029,9 @@ export const ADMIN_CONFIG = {
     sellMode: "KeyX", // Toggle sell mode
     tabBuild: "F1", // Switch to Build tab
     tabUpgrade: "F2", // Switch to Upgrade tab
-    tabIntel: "F3", // Switch to Intel tab
-    tabLevels: "F4", // Switch to Levels tab
+    tabMarket: "F3", // Switch to Market tab
+    tabIntel: "F4", // Switch to Intel tab
+    tabLevels: "F5", // Switch to Levels tab
 
     // Misc
     save: "KeyS", // Quick save (also Ctrl+S)
@@ -2040,6 +2041,9 @@ export const ADMIN_CONFIG = {
 
 export const STARTING_GOLD = 350;
 export const STARTING_LIVES = 25;
+
+// ─── MARKET TAB UNLOCKS ───────────────────────────────────────────────────────
+export const MARKET_UNLOCK_WAVE = 100;
 
 // ─── WAVE MODIFIERS ───────────────────────────────────────────────────────────
 export const WAVE_MODIFIERS = [

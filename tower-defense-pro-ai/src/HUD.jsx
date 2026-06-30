@@ -13,6 +13,7 @@ import {
   ACHIEVEMENTS,
   ENEMY_EVOLUTIONS,
   SKINS,
+  MARKET_UNLOCK_WAVE,
 } from "./gameConstants.js";
 import { getGlobalMemory } from "./WaveAI.js";
 import { formatSpecialTags, getSkillStackHints } from "./skillRegistry.js";
@@ -188,6 +189,16 @@ export function HUD({
     }
     setConfirmLevel(lvlId);
   };
+
+  const marketUnlocked = wave >= MARKET_UNLOCK_WAVE;
+
+  const hudTabs = [
+    "build",
+    "upgrade",
+    ...(marketUnlocked ? ["market"] : []),
+    "intel",
+    "levels",
+  ];
 
   return (
     <div
@@ -659,7 +670,7 @@ export function HUD({
           background: "#070710",
         }}
       >
-        {["build", "upgrade", "intel", "levels"].map((tab) => (
+        {hudTabs.map((tab) => (
           <button
             key={tab}
             onClick={() => onSetTab(tab)}
@@ -674,7 +685,7 @@ export function HUD({
               border: "none",
               borderBottom:
                 activeTab === tab
-                  ? `2px solid ${{ build: "#4ade80", upgrade: "#fbbf24", intel: "#e879f9", levels: "#38bdf8" }[tab]}`
+                  ? `2px solid ${{ build: "#4ade80", upgrade: "#fbbf24", market: "#facc15", intel: "#e879f9", levels: "#38bdf8" }[tab]}`
                   : "2px solid transparent",
               cursor: "pointer",
               textTransform: "uppercase",
@@ -686,7 +697,9 @@ export function HUD({
                 ? "⬆️"
                 : tab === "intel"
                   ? "🧠"
-                  : "🗺️"}{" "}
+                  : tab === "market"
+                    ? "💰"
+                    : "🗺️"}{" "}
             {tab}
           </button>
         ))}

@@ -22,6 +22,7 @@ export const GOLD_MARKET_ITEMS = {
     color: "#fbbf24",
     requiresTarget: true, // user must click a tower after buying
     repeatable: true,
+    stateGate: "idle", // only buy between waves
   },
   war_bond: {
     id: "war_bond",
@@ -33,39 +34,43 @@ export const GOLD_MARKET_ITEMS = {
     color: "#4ade80",
     requiresTarget: false,
     repeatable: false, // only one bond active at a time
+    stateGate: "idle",
   },
   mercenary: {
     id: "mercenary",
     name: "Mercenary Unit",
     icon: "🗡️",
-    desc: "Deploys a powerful combat unit that walks the path and attacks nearby enemies for 20 seconds.",
+    desc: "Deploys a powerful combat unit mid-wave. Attacks nearby enemies for 20 seconds.",
     baseCost: 300,
     costScaling: 0.05,
     color: "#f43f5e",
     requiresTarget: false,
     repeatable: true,
+    stateGate: "wave", // only buy during an active wave
   },
   dark_pact: {
     id: "dark_pact",
     name: "Dark Pact",
     icon: "💀",
-    desc: "Sacrifice 500g for 3000 score + 2 lives. Diminishing returns after 3 uses.",
+    desc: "Sacrifice 500g for score + lives. Returns: 100%→80%→60%→40%→20%. Max 5 uses per run.",
     baseCost: 500,
     costScaling: 0,
     color: "#818cf8",
     requiresTarget: false,
     repeatable: true,
+    stateGate: null,
   },
   arms_deal: {
     id: "arms_deal",
     name: "Arms Deal",
     icon: "🔫",
-    desc: "All towers gain +1 chain target, +25% range, and +15% damage for next wave.",
+    desc: "All towers gain +1 chain target, +25% range, +15% damage for the NEXT wave only.",
     baseCost: 400,
     costScaling: 0.05,
     color: "#e879f9",
     requiresTarget: false,
     repeatable: true,
+    stateGate: "idle",
   },
 };
 
@@ -99,16 +104,16 @@ export class GoldMarket {
       return { ok: false, reason: "Bond already active" };
 
     if (itemId === "dark_pact" && this.darkPactUses >= 5)
-      return { ok: false, reason: "Pact maxed (5 uses)" };
+      return { ok: false, reason: "Pact maxed (5 uses per run)" };
 
-    if (
-      (itemId === "overcharge" || itemId === "arms_deal") &&
-      engine.state !== "idle"
-    )
+    if (itemId === "mercenary" && this.mercenaries.length >= 2)
+      return { ok: false, reason: "Max 2 mercenaries active" };
+
+    if (item.stateGate === "idle" && engine.state !== "idle")
       return { ok: false, reason: "Buy between waves only" };
 
-    if (itemId === "mercenary" && engine.state !== "wave")
-      return { ok: false, reason: "Buy during an active wave only" };
+    if (item.stateGate === "wave" && engine.state !== "wave")
+      return { ok: false, reason: "Buy during an active wave" };
 
     return { ok: true, cost };
   }
@@ -155,6 +160,7 @@ export class GoldMarket {
 
       case "dark_pact": {
         this.darkPactUses++;
+        // Diminishing returns: use 1=100%, 2=80%, 3=60%, 4=40%, 5=20%
         const diminish = Math.max(0.2, 1 - (this.darkPactUses - 1) * 0.2);
         const scoreGain = Math.floor(3000 * diminish);
         const livesGain = this.darkPactUses <= 3 ? 2 : 1;
@@ -163,10 +169,11 @@ export class GoldMarket {
           engine.levelConfig.startLives,
           engine.lives + livesGain,
         );
+        const remaining = 5 - this.darkPactUses;
         engine.vfx.addFloatingText(
           engine.canvas.width / 2,
           engine.canvas.height / 2 - 20,
-          `💀 DARK PACT! +${scoreGain} score, +${livesGain} ❤️`,
+          `💀 DARK PACT! +${scoreGain} score, +${livesGain} ❤️ (${remaining} uses left)`,
           "#818cf8",
         );
         engine.vfx.addParticles(
@@ -181,12 +188,15 @@ export class GoldMarket {
 
       case "arms_deal":
         this.armsDealActive = true;
-        // Apply immediately for the current or next wave prep
+        console.log(
+          `%c[ArmsDeal] BOUGHT — wave ${engine.wave}, tick ${engine.tick}`,
+          "color:#e879f9",
+        );
         this._applyArmsDeal();
         engine.vfx.addFloatingText(
           engine.canvas.width / 2,
           engine.canvas.height / 2 - 20,
-          "🔫 ARMS DEAL! All towers buffed for this wave!",
+          "🔫 ARMS DEAL! All towers buffed for next wave!",
           "#e879f9",
         );
         engine.vfx.addParticles(
@@ -207,9 +217,8 @@ export class GoldMarket {
     if (!this.pendingOvercharge) return false;
     this.pendingOvercharge = false;
 
-    // Multiplier-based (not snapshot-based) so it composes safely with
-    // fortify/XP passives that may also change tower.damage mid-wave,
-    // and is always cleanly removable by dividing back out.
+    // Multiplier-based so it composes safely with fortify/XP passives
+    // and is cleanly reversible at wave-end by dividing back out.
     if (!tower._overchargeActive) {
       tower._overchargeActive = true;
       tower.damage *= 3;
@@ -231,13 +240,17 @@ export class GoldMarket {
   _applyArmsDeal() {
     const engine = this.engine;
     for (const tower of engine.towers) {
+      if (tower._armsDealBuff) continue; // already applied — guard against double-apply
+
       tower._armsDealBuff = true;
-      tower._armsDealOrigChain = tower.chainTargets;
-      tower._armsDealOrigRange = tower.range;
-      tower._armsDealOrigDamage = tower.damage;
+
+      // tower._armsDealOrigChain = tower.chainTargets;
+      // tower._armsDealOrigRange = tower.range;
+      // tower._armsDealOrigDamage = tower.damage;
       tower.chainTargets = (tower.chainTargets || 0) + 1;
-      tower.range *= 1.25;
-      tower.damage *= 1.15;
+      // tower.range *= 1.25;
+      // tower.damage *= 1.15;
+      console.log(`[ArmsDeal] applied → tower ${tower.id} (${tower.type})`);
     }
   }
 
@@ -246,15 +259,9 @@ export class GoldMarket {
     const path = engine.path;
 
     // Spawn near the current enemy cluster (median pathIndex of live enemies)
-    // rather than a fixed 20%-of-path point — if bought mid-wave, enemies may
-    // have already walked past a fixed point, leaving the merc with nothing
-    // in range and making it look like it's "doing nothing".
     let startIdx;
     if (engine.enemies.length > 0) {
-      const indices = engine.enemies
-        .map((e) => e.pathIndex || 0)
-        .sort((a, b) => a - b);
-      startIdx = indices[Math.floor(indices.length / 2)]; // median
+      startIdx = Math.max(...engine.enemies.map((e) => e.pathIndex || 0));
       startIdx = Math.max(0, Math.min(path.length - 1, startIdx));
     } else {
       startIdx = Math.floor(path.length * 0.2);
@@ -267,11 +274,11 @@ export class GoldMarket {
       y: spawnPt.y,
       pathIndex: startIdx,
       // Walk backwards (decreasing pathIndex toward 0)
-      direction: -1,
+      direction: 1,
       speed: 1.4,
-      damage: 80 + engine.wave * 12,
-      range: 130, // generous — should always find nearby targets once on screen
-      attackRate: 30,
+      damage: Math.max(8, engine.wave * 4),
+      range: 120,
+      attackRate: 45,
       attackCooldown: 0,
       hp: 999999, // effectively unkillable
       timer: 60 * 20, // 20 seconds
@@ -292,7 +299,8 @@ export class GoldMarket {
     const engine = this.engine;
     if (engine.state !== "wave") return;
 
-    // ── Tick mercenaries
+    const LEASH_AHEAD = 8;
+
     for (let i = this.mercenaries.length - 1; i >= 0; i--) {
       const merc = this.mercenaries[i];
       merc.timer--;
@@ -308,7 +316,6 @@ export class GoldMarket {
         continue;
       }
 
-      // Move along path
       const path = engine.path;
       if (!path || path.length === 0) {
         console.warn(
@@ -316,15 +323,48 @@ export class GoldMarket {
         );
         continue;
       }
+
+      // ── Leash logic: track the front of the wave on the SAME path the merc
+      // walks (engine.path). Dual-front enemies use _altPath and aren't
+      // comparable by pathIndex, so exclude them; fall back to all enemies
+      // only if none exist on the main path.
+      let packEnemies = engine.enemies.filter((e) => !e._altPath);
+      if (packEnemies.length === 0) packEnemies = engine.enemies;
+
+      if (packEnemies.length > 0) {
+        const packFrontIdx = Math.max(
+          ...packEnemies.map((e) => e.pathIndex || 0),
+        );
+        const avgSpeed =
+          packEnemies.reduce((s, e) => s + (e.baseSpeed || e.speed || 0), 0) /
+          packEnemies.length;
+
+        merc.speed = Math.max(0.4, avgSpeed); // pace with the pack, no artificial lead
+
+        if (
+          merc.direction === 1 &&
+          merc.pathIndex - packFrontIdx >= LEASH_AHEAD
+        ) {
+          merc.direction = -1; // too far ahead — fall back toward the wave
+        } else if (merc.direction === -1 && merc.pathIndex <= packFrontIdx) {
+          merc.direction = 1; // caught up — resume escorting forward
+        }
+      } else {
+        merc.speed = 1.4; // no living enemies at all — idle pace
+      }
+
       const nextIdx = merc.pathIndex + merc.direction;
+
+      // Reverse direction when reaching either end of the path.
       if (nextIdx < 0 || nextIdx >= path.length) {
-        merc.direction *= -1; // bounce
+        merc.direction *= -1;
       } else {
         const tgt = path[nextIdx];
-        const dx = tgt.x - merc.x,
-          dy = tgt.y - merc.y;
+        const dx = tgt.x - merc.x;
+        const dy = tgt.y - merc.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < merc.speed) {
+
+        if (dist <= merc.speed) {
           merc.pathIndex = nextIdx;
           merc.x = tgt.x;
           merc.y = tgt.y;
@@ -337,49 +377,53 @@ export class GoldMarket {
       // Attack nearby enemies
       if (merc.attackCooldown > 0) {
         merc.attackCooldown--;
-      } else {
-        const nearby = engine.enemies
-          .filter((e) => {
-            const dx = e.x - merc.x,
-              dy = e.y - merc.y;
-            return Math.sqrt(dx * dx + dy * dy) <= merc.range;
-          })
-          .sort(
-            (a, b) =>
-              (a.x - merc.x) ** 2 +
-              (a.y - merc.y) ** 2 -
-              ((b.x - merc.x) ** 2 + (b.y - merc.y) ** 2),
-          );
+        continue;
+      }
 
-        if (nearby.length > 0) {
-          merc.attackCooldown = merc.attackRate;
-          // Hit up to 3 enemies
-          for (let j = 0; j < Math.min(3, nearby.length); j++) {
-            engine.combatSystem.damageEnemy(nearby[j], merc.damage, {
-              towerType: "basic",
-              towerId: null,
-              armorPiercing: true,
-              specials: [],
-            });
-            engine.vfx.addBolt(
-              merc.x,
-              merc.y,
-              nearby[j].x,
-              nearby[j].y,
-              "#f43f5e",
-            );
-          }
-          engine.vfx.addParticles(merc.x, merc.y, "#f43f5e", 5);
-        }
+      const nearby = engine.enemies.filter((e) => {
+        const dx = e.x - merc.x,
+          dy = e.y - merc.y;
+        return Math.sqrt(dx * dx + dy * dy) <= merc.range;
+      });
+
+      // Finisher targeting: lowest current HP first, not closest.
+      // This means the merc needs towers to have already softened enemies —
+      // it can't out-damage a full-health wave on its own within its duration.
+      nearby.sort((a, b) => a.hp - b.hp);
+
+      if (nearby.length > 0) {
+        merc.attackCooldown = merc.attackRate;
+        const target = nearby[0]; // single target only
+
+        engine.combatSystem.damageEnemy(target, merc.damage, {
+          towerType: "basic",
+          towerId: null,
+          armorPiercing: false, // respects armor like a real unit
+          specials: [],
+          rewardMult: 0.4,
+        });
+
+        engine.vfx.addDamageNumber(
+          target.x,
+          target.y - target.size - 4,
+          merc.damage,
+          "basic",
+        );
+
+        engine.vfx.addBolt(merc.x, merc.y, target.x, target.y, "#f43f5e");
+        engine.vfx.addParticles(merc.x, merc.y, "#f43f5e", 4);
       }
     }
   }
 
-  /** Call at wave clear — check war bond. */
+  /** Called at wave-end. */
   onWaveClear(leakCount) {
     const engine = this.engine;
-
-    // ── Check war bond
+    console.log(
+      `%c[WaveClear] wave ${engine.wave} ended — armsDealActive=${this.armsDealActive}, buffed towers=${engine.towers.filter((t) => t._armsDealBuff).length}`,
+      "color:#4ade80; font-weight:bold",
+    );
+    // ── War bond payout/loss
     if (this.warBond) {
       if (leakCount === 0) {
         const payout = this.warBond.bet * this.warBond.multiplier;
@@ -401,15 +445,14 @@ export class GoldMarket {
         engine.vfx.addFloatingText(
           engine.canvas.width / 2,
           engine.canvas.height / 2 - 50,
-          `🏦 War Bond lost — ${leakCount} leaks`,
+          `🏦 War Bond lost — ${leakCount} leak${leakCount > 1 ? "s" : ""}`,
           "#ef4444",
         );
       }
       this.warBond = null;
     }
 
-    // ── Remove overcharge (divide multiplier back out — safe even if
-    //    fortify/XP passives changed tower.damage during the wave)
+    // ── Overcharge: divide multiplier back out
     for (const tower of engine.towers) {
       if (tower._overchargeActive) {
         tower.damage /= 3;
@@ -424,25 +467,44 @@ export class GoldMarket {
       }
     }
 
-    // ── Remove arms deal buffs
+    // ── Arms deal cleanup: only chainTargets was directly mutated.
+    // Damage/range were runtime multipliers, auto-disabled by armsDealActive=false.
     for (const tower of engine.towers) {
       if (tower._armsDealBuff) {
-        tower.chainTargets = tower._armsDealOrigChain;
-        tower.range = tower._armsDealOrigRange;
-        tower.damage = tower._armsDealOrigDamage;
+        tower.chainTargets = Math.max(0, tower.chainTargets - 1);
+        // tower.range /= 1.25;
+        // tower.damage /= 1.15;
         delete tower._armsDealBuff;
-        delete tower._armsDealOrigChain;
-        delete tower._armsDealOrigRange;
-        delete tower._armsDealOrigDamage;
+        console.log(`[ArmsDeal] reverted ← tower ${tower.id} (${tower.type})`);
       }
     }
     this.armsDealActive = false;
+    console.log(`[ArmsDeal] armsDealActive reset to false`);
 
-    // ── Clear lingering mercenaries
+    // ── Clear mercenaries
     this.mercenaries.length = 0;
 
-    // ── Clear pending overcharge (if player forgot to click)
+    // ── Cancel any pending overcharge the player didn't use
     this.pendingOvercharge = false;
+  }
+
+  /** Serialise for save system. */
+  getSaveData() {
+    return {
+      darkPactUses: this.darkPactUses,
+      warBond: this.warBond,
+    };
+  }
+
+  /** Restore from save. */
+  loadSaveData(data) {
+    if (!data) return;
+    this.darkPactUses = data.darkPactUses ?? 0;
+    this.warBond = data.warBond ?? null;
+    // Never restore mid-wave state (mercs, pendingOvercharge, armsDeal)
+    this.mercenaries = [];
+    this.pendingOvercharge = false;
+    this.armsDealActive = false;
   }
 
   getState() {
@@ -450,6 +512,7 @@ export class GoldMarket {
       warBond: this.warBond ? { ...this.warBond } : null,
       pendingOvercharge: this.pendingOvercharge,
       darkPactUses: this.darkPactUses,
+      darkPactRemaining: 5 - this.darkPactUses,
       mercenaryCount: this.mercenaries.length,
       armsDealActive: this.armsDealActive,
       mercenaries: this.mercenaries.map((m) => ({

@@ -358,13 +358,15 @@ export class TowerSystem {
     const fireRateMult = globalBuff.timer > 0 ? globalBuff.fireRateMult : 1;
     const damageMult =
       (globalBuff.timer > 0 ? globalBuff.damageMult : 1) *
-      (lastStandActive ? 1.5 : 1);
+      (lastStandActive ? 1.5 : 1) *
+      (engine.goldMarket?.armsDealActive ? 1.15 : 1);
     const modFireRateMult = activeModifier?.apply?.towerFireRateMult
       ? 1 - activeModifier.apply.towerFireRateMult
       : 1;
-    const modRangeMult = activeModifier?.apply?.towerRangeMult
-      ? 1 + activeModifier.apply.towerRangeMult
-      : 1;
+    const modRangeMult =
+      (activeModifier?.apply?.towerRangeMult
+        ? 1 + activeModifier.apply.towerRangeMult
+        : 1) * (engine.goldMarket?.armsDealActive ? 1.25 : 1);
 
     // Tick ability cooldowns
     engine.abilitySystem.tickCooldowns();

@@ -486,6 +486,8 @@ export class GameEngine {
 
   _emitState() {
     const lvl = this.levelConfig;
+    const armsDealActive = this.goldMarket?.armsDealActive;
+
     this.onStateChange({
       gold: Math.floor(this.gold),
       lives: this.lives,
@@ -587,9 +589,9 @@ export class GameEngine {
         damageType: TOWER_TYPES[t.type]?.damageType || "physical",
 
         // ── ADDITIONAL STATS ──────────────────────────────────────
-        currentDamage: Math.round(t.damage), // live damage (not totalDamage)
+        currentDamage: Math.round(t.damage * (armsDealActive ? 1.15 : 1)),
         fireRate: t.fireRate,
-        range: Math.round(t.range),
+        range: Math.round(t.range * (armsDealActive ? 1.25 : 1)),
         splash: t.splash || 0,
         slowFactor: t.slowFactor || 0,
         burnDamage: t.burnDamage || 0,

@@ -302,6 +302,8 @@ export class RenderSystem {
       );
     }
 
+    const armsDealActive = engine.goldMarket?.armsDealActive;
+
     // ── Hover highlight ───────────────────────────────────────────────────────
     if (engine.hoveredCell && !["gameover", "victory"].includes(engine.state)) {
       const { col, row } = engine.hoveredCell;
@@ -314,9 +316,10 @@ export class RenderSystem {
       ctx.fillRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
       if (check.ok) {
         const tDef = TOWER_TYPES[engine.selectedTowerType];
+        const effectiveRange = tDef.range * (armsDealActive ? 1.25 : 1);
         // filled range circle
         ctx.beginPath();
-        ctx.arc(cx, cy, tDef.range, 0, Math.PI * 2);
+        ctx.arc(cx, cy, effectiveRange, 0, Math.PI * 2);
         ctx.fillStyle = "rgba(74,222,128,0.04)";
         ctx.fill();
         ctx.strokeStyle = "rgba(74,222,128,0.3)";
@@ -339,13 +342,7 @@ export class RenderSystem {
       const skinTowerDef = engine.activeSkin?.towers?.[tower.type];
       const towerColor = skinTowerDef?.color || tower.color;
 
-      ctx.arc(
-        cx,
-        cy,
-        TOWER_TYPES[engine.selectedTowerType].range,
-        0,
-        Math.PI * 2,
-      );
+      const effectiveRange = tower.range * (armsDealActive ? 1.25 : 1);
 
       // last-stand red tint
       if (engine.lastStandActive) {
@@ -460,14 +457,14 @@ export class RenderSystem {
       // range ring on select
       if (isSelected) {
         ctx.beginPath();
-        ctx.arc(cx, cy, tower.range, 0, Math.PI * 2);
+        ctx.arc(cx, cy, effectiveRange, 0, Math.PI * 2);
         ctx.strokeStyle = towerColor + "55";
         ctx.lineWidth = 1;
         ctx.setLineDash([5, 5]);
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.beginPath();
-        ctx.arc(cx, cy, tower.range, 0, Math.PI * 2);
+        ctx.arc(cx, cy, effectiveRange, 0, Math.PI * 2);
         ctx.fillStyle = towerColor + "08";
         ctx.fill();
       }
@@ -978,42 +975,6 @@ export class RenderSystem {
       ctx.restore();
     }
 
-    // ── MERCENARIES ───────────────────────────────────────────────────────────
-    if (engine.goldMarket?.mercenaries) {
-      for (const merc of engine.goldMarket.mercenaries) {
-        ctx.save();
-
-        // Body
-        ctx.fillStyle = "#f59e0b";
-        ctx.beginPath();
-        ctx.arc(merc.x, merc.y, 8, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Outline
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        // Sword icon
-        ctx.font = "12px sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = "#111827";
-        ctx.fillText("⚔", merc.x, merc.y);
-
-        // Lifetime bar
-        const pct = merc.life / merc.maxLife;
-
-        ctx.fillStyle = "#111827";
-        ctx.fillRect(merc.x - 10, merc.y - 16, 20, 3);
-
-        ctx.fillStyle = "#22c55e";
-        ctx.fillRect(merc.x - 10, merc.y - 16, 20 * pct, 3);
-
-        ctx.restore();
-      }
-    }
-
     // ── TESLA BOLT EFFECTS ────────────────────────────────────────────────────
     for (const bolt of engine.boltEffects) {
       const alpha = bolt.life / bolt.maxLife;
@@ -1177,8 +1138,8 @@ export class RenderSystem {
       ctx.textBaseline = "middle";
       // clip text so it never overflows the pill
       ctx.save();
-      ctx.rect(8, tauntY, measuredW - 4, 18);
-      ctx.clip();
+      // ctx.rect(8, tauntY, measuredW - 4, 18);
+      // ctx.clip();
       ctx.fillText(tauntText, 12, tauntY + 9);
       ctx.restore();
       ctx.restore();

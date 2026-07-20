@@ -293,6 +293,26 @@ export class WaveSystem {
 
   tickSpawning() {
     const engine = this.engine;
+    if (engine.tick % 120 === 0 && engine.state === "wave") {
+      console.log(
+        `[WaveWatch] wave ${engine.wave}, tick ${engine.tick} — spawnQueue=${engine.spawnQueue.length}, enemies=${engine.enemies.length}`,
+      );
+      if (engine.enemies.length > 0 && engine.spawnQueue.length === 0) {
+        console.log(
+          "  stuck enemies:",
+          engine.enemies.map((e) => ({
+            id: e.id,
+            type: e.type,
+            hp: Math.round(e.hp),
+            pathIndex: e.pathIndex,
+            stunTimer: e.stunTimer,
+            speed: e.speed,
+            isBoss: e.isBoss,
+            altPath: !!e._altPath,
+          })),
+        );
+      }
+    }
     if (engine.spawnQueue.length === 0) return;
     engine.spawnTimer++;
     // Use absolute spawnDelay — check all enemies whose delay has been reached

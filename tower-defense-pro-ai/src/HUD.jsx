@@ -3732,6 +3732,7 @@ function GoldMarketPanel({
     if (gold < cost) return false;
     if (item.id === "war_bond" && market?.warBond) return false;
     if (item.id === "dark_pact" && market?.darkPactUses >= 5) return false;
+    if (item.id === "arms_deal" && market?.armsDealActive) return false;
     return true;
   };
 
